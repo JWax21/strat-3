@@ -524,8 +524,9 @@ async def fetch_and_analyze_sports():
     
     try:
         # Fetch sports-specific markets from both platforms
+        # Using sports-specific methods for both platforms
         poly_task = state.polymarket_client.get_sports_markets(max_markets=500)
-        kalshi_task = state.kalshi_client.get_all_open_markets(max_markets=500)
+        kalshi_task = state.kalshi_client.get_sports_markets()  # Fetches from sports series
         
         poly_markets, kalshi_markets = await asyncio.gather(
             poly_task, kalshi_task, return_exceptions=True

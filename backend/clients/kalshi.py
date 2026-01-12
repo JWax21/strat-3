@@ -366,49 +366,71 @@ class KalshiClient:
     
     # Sports series tickers for championship/award markets
     SPORTS_SERIES = [
-        # NFL - Championships
-        "KXNFLNFCCHAMP",   # NFC Champion
-        "KXNFLAFCCHAMP",   # AFC Champion (if exists)
+        # Major Championships
+        "KXSB",            # Super Bowl
+        "KXNBA",           # NBA Championship
+        "KXMLB",           # MLB World Series
+        "KXNHL",           # NHL Stanley Cup (if exists)
+        # NFL Division/Conference
+        "KXAFC",           # AFC Championship
+        "KXNFC",           # NFC Championship
+        # NFL Awards
         "KXNFLSBMVP",      # Super Bowl MVP
-        "KXNFLNFCWEST",    # NFC West Winner
-        "KXNFLNFCNORTH",   # NFC North Winner
-        "KXNFLAFCSOUTH",   # AFC South Winner
-        "KXNFLAFCNORTH",   # AFC North
         "KXNFLDPOY",       # Defensive Player of Year
         "KXNFLOROTY",      # Offensive Rookie of Year
-        "KXNFLHALLOFFAME", # Hall of Fame
-        "KXLEADERNFLRUSHYDS", # Rushing yards leader
-        # NBA - Championships
-        "KXNBA",           # NBA Championship
+        "KXNFLCPOY",       # Comeback Player of Year
+        "KXNFLCOACH",      # Coach of the Year
+        # NBA Awards
         "KXNBAROY",        # NBA Rookie of the Year
-        "KXNBAATLANTIC",   # NBA Atlantic Division
-        "KXLEADERNBAPTS",  # PPG Leader
-        "KXNBAWINRECORD",  # Win records
-        "KXRECORDNBABEST", # Best Record
+        "KXNBAMVP",        # NBA MVP
         # NHL
         "KXNHLEAST",       # Eastern Conference
-        "KXNHLRICHARD",    # Richard Trophy
+        "KXNHLWEST",       # Western Conference
+        "KXNHLMVP",        # Hart Trophy
         # MLB
-        "KXMLB",           # World Series
+        "KXMLBALEAST",     # AL East Winner
         "KXMLBNLEAST",     # NL East Winner
         "KXMLBALROTY",     # AL Rookie of Year
-        # Soccer
-        "KXMWORLDCUP",     # Men's World Cup
-        # College
-        "KXNCAAF",         # NCAAF Championship
+        "KXMLBNLROTY",     # NL Rookie of Year
     ]
     
     async def get_sports_markets(self) -> List[KalshiMarket]:
         """
-        Fetch sports championship/award markets - simplified version.
+        Fetch sports championship/award markets from specific series.
         
         Returns:
             List of sports markets
         """
-        # Just return empty - sports matching now happens via keyword matching
-        # on the main market fetch. This prevents excessive API calls.
-        logger.info("Sports markets will be filtered from main market fetch")
-        return []
+        all_markets = []
+        seen_tickers = set()
+        
+        logger.info(f"Fetching sports markets from {len(self.SPORTS_SERIES)} Kalshi series...")
+        
+        for series_ticker in self.SPORTS_SERIES:
+            try:
+                # Fetch markets for this series
+                markets = await self.get_markets(
+                    series_ticker=series_ticker,
+                    status="open",
+                    limit=100
+                )
+                
+                for market in markets:
+                    if market.ticker not in seen_tickers:
+                        all_markets.append(market)
+                        seen_tickers.add(market.ticker)
+                
+                if markets:
+                    logger.info(f"Found {len(markets)} markets in series {series_ticker}")
+                
+                await asyncio.sleep(0.2)  # Rate limiting
+                
+            except Exception as e:
+                logger.warning(f"Failed to fetch series {series_ticker}: {e}")
+                continue
+        
+        logger.info(f"Total sports markets from Kalshi: {len(all_markets)}")
+        return all_markets
     
     async def get_all_open_markets(self, max_markets: int = 500) -> List[KalshiMarket]:
         """

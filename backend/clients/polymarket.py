@@ -503,10 +503,8 @@ class PolymarketClient:
         """
         Fetch sports-related markets from Polymarket.
         
-        Uses multiple strategies:
-        1. Search for sports keywords
-        2. Get events tagged with sports
-        3. Filter by category
+        Strategy: Get all active events and filter for sports-related titles,
+        then extract markets from those events.
         
         Args:
             max_markets: Maximum markets to return
@@ -517,75 +515,65 @@ class PolymarketClient:
         all_sports_markets = []
         seen_ids = set()
         
-        # Sports keywords to search for
-        sports_keywords = [
-            "NFL", "Super Bowl", "NBA", "NBA Finals", "MLB", "World Series",
-            "NHL", "Stanley Cup", "UFC", "MMA", "soccer", "World Cup",
-            "college football", "NCAA", "championship", "playoffs",
-            "MVP", "rookie of the year", "Pro Football", "Pro Basketball",
-            "Pro Baseball", "Pro Hockey"
+        # Sports-related keywords to match in event titles
+        sports_title_keywords = [
+            "super bowl", "nfl", "nba", "mlb", "nhl", "ufc", "mma",
+            "championship", "playoffs", "world series", "stanley cup",
+            "mvp", "rookie of the year", "coach of the year", "player of the year",
+            "football", "basketball", "baseball", "hockey", "soccer",
+            "premier league", "world cup", "ncaa", "college", 
+            "passing yards", "rushing yards", "touchdown", "home run",
+            "defensive", "offensive", "protector", "comeback"
         ]
         
-        # Strategy 1: Search by sports keywords
-        for keyword in sports_keywords:
-            if len(all_sports_markets) >= max_markets:
-                break
-                
-            try:
-                markets = await self.search_markets(keyword, limit=50)
-                for market in markets:
-                    if market.id not in seen_ids:
-                        all_sports_markets.append(market)
-                        seen_ids.add(market.id)
-                        
-                await asyncio.sleep(0.1)  # Rate limiting
-            except Exception as e:
-                logger.warning(f"Failed to search for '{keyword}': {e}")
+        logger.info("Fetching sports events from Polymarket...")
         
-        # Strategy 2: Get markets from events and filter for sports
         try:
-            events = await self.get_all_active_events(max_events=200)
+            # Get all active events
+            events = await self.get_all_active_events(max_events=300)
+            logger.info(f"Retrieved {len(events)} total events, filtering for sports...")
             
-            sports_categories = {"sports", "nfl", "nba", "mlb", "nhl", "soccer", "ufc"}
-            sports_tags = {"sports", "nfl", "nba", "mlb", "nhl", "soccer", "ufc", 
-                          "super bowl", "world series", "stanley cup", "championship"}
-            
+            sports_events = []
             for event in events:
-                if len(all_sports_markets) >= max_markets:
-                    break
-                    
-                # Check if event is sports-related
-                event_tags = set(t.lower() for t in event.get("tags", []))
-                event_category = event.get("category", "").lower()
                 event_title = event.get("title", "").lower()
+                event_category = (event.get("category") or "").lower()
                 
+                # Check if event is sports-related
                 is_sports = (
-                    event_category in sports_categories or
-                    bool(event_tags & sports_tags) or
-                    any(kw.lower() in event_title for kw in ["NFL", "NBA", "MLB", "NHL", 
-                        "Super Bowl", "World Series", "Stanley Cup", "championship", 
-                        "playoffs", "MVP", "football", "basketball", "baseball", "hockey"])
+                    event_category == "sports" or
+                    any(kw in event_title for kw in sports_title_keywords)
                 )
                 
                 if is_sports:
-                    for market_data in event.get("markets", []):
-                        if len(all_sports_markets) >= max_markets:
-                            break
-                            
-                        market_id = market_data.get("id", "")
-                        if market_id in seen_ids:
-                            continue
-                            
-                        try:
-                            market = self._parse_market(market_data)
-                            if market:
-                                all_sports_markets.append(market)
-                                seen_ids.add(market_id)
-                        except Exception as e:
-                            logger.warning(f"Failed to parse sports market: {e}")
-                            
+                    sports_events.append(event)
+            
+            logger.info(f"Found {len(sports_events)} sports-related events")
+            
+            # Extract markets from sports events
+            for event in sports_events:
+                event_markets = event.get("markets", [])
+                
+                for market_data in event_markets:
+                    if len(all_sports_markets) >= max_markets:
+                        break
+                    
+                    market_id = str(market_data.get("id", ""))
+                    if market_id in seen_ids or not market_id:
+                        continue
+                    
+                    try:
+                        market = self._parse_market(market_data)
+                        if market and market.yes_price > 0:  # Filter out markets with no price
+                            all_sports_markets.append(market)
+                            seen_ids.add(market_id)
+                    except Exception as e:
+                        logger.warning(f"Failed to parse sports market: {e}")
+                
+                if len(all_sports_markets) >= max_markets:
+                    break
+            
         except Exception as e:
-            logger.warning(f"Failed to fetch sports events: {e}")
+            logger.error(f"Failed to fetch sports events: {e}", exc_info=True)
         
         logger.info(f"Found {len(all_sports_markets)} sports markets on Polymarket")
         return all_sports_markets[:max_markets]
