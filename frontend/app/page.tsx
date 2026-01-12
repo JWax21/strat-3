@@ -19,52 +19,42 @@ import { formatDistanceToNow } from 'date-fns'
 import { clsx } from 'clsx'
 
 interface ArbitrageOpportunity {
-  matched_market: {
-    polymarket: {
-      question: string
-      yes_price: number
-      no_price: number
-      volume: number
-      category: string
-    }
-    kalshi: {
-      question: string
-      ticker: string
-      yes_price: number
-      no_price: number
-      volume: number
-      category: string
-    }
-    similarity_score: number
+  polymarket: {
+    id: string
+    question: string
+    yes_price: number
+    no_price: number
+    url: string
   }
-  poly_yes_price: number
-  poly_no_price: number
-  kalshi_yes_price: number
-  kalshi_no_price: number
+  kalshi: {
+    id: string
+    question: string
+    yes_price: number
+    no_price: number
+    url: string
+  }
+  league: string
+  market_type: string
+  team: string | null
   price_difference: number
   price_difference_percent: number
-  potential_profit_bps: number
-  buy_yes_on: string
-  buy_no_on: string
-  profitable: boolean
-  description: string
-  detected_at: string
+  profit_bps: number
+  buy_on: string
+  sell_on: string
+  match_score: number
+  match_reason: string
 }
 
 interface Summary {
-  total_opportunities: number
-  profitable_count: number
-  avg_price_difference_percent: number
-  max_price_difference_percent: number
-  avg_profit_bps: number
-  max_profit_bps: number
+  total: number
+  by_league?: Record<string, number>
+  avg_difference?: number
 }
 
 interface ApiResponse {
   opportunities: ArbitrageOpportunity[]
   summary: Summary
   last_updated: string | null
-  is_stale: boolean
 }
 
 export default function Dashboard() {
@@ -86,7 +76,7 @@ export default function Dashboard() {
       return
     }
     try {
-      const response = await fetch(`${API_BASE}/api/arbitrage?min_difference=${minDifference}&limit=100`)
+      const response = await fetch(`${API_BASE}/api/sports/arbitrage?min_difference=${minDifference}&limit=100`)
       if (!response.ok) throw new Error('Failed to fetch data')
       const result = await response.json()
       setData(result)
@@ -102,9 +92,9 @@ export default function Dashboard() {
     setRefreshing(true)
     try {
       const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
-      await fetch(`${apiBase}/api/arbitrage/refresh`, { method: 'POST' })
-      // Wait a bit for the backend to process
-      await new Promise(resolve => setTimeout(resolve, 3000))
+      await fetch(`${apiBase}/api/sports/refresh`, { method: 'POST' })
+      // Wait for the backend to process (sports scan takes longer)
+      await new Promise(resolve => setTimeout(resolve, 8000))
       await fetchData()
     } catch (err) {
       setError('Failed to refresh data')
@@ -123,9 +113,11 @@ export default function Dashboard() {
     if (!searchQuery) return true
     const query = searchQuery.toLowerCase()
     return (
-      opp.matched_market.polymarket.question.toLowerCase().includes(query) ||
-      opp.matched_market.kalshi.question.toLowerCase().includes(query) ||
-      opp.matched_market.kalshi.ticker.toLowerCase().includes(query)
+      opp.polymarket.question.toLowerCase().includes(query) ||
+      opp.kalshi.question.toLowerCase().includes(query) ||
+      opp.kalshi.id.toLowerCase().includes(query) ||
+      opp.league?.toLowerCase().includes(query) ||
+      opp.team?.toLowerCase().includes(query)
     )
   }) || []
 
@@ -160,7 +152,7 @@ export default function Dashboard() {
               <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10">
                 <div className={clsx(
                   "w-2 h-2 rounded-full",
-                  data?.is_stale ? "bg-yellow-500" : "bg-profit live-indicator"
+                  data?.last_updated ? "bg-profit live-indicator" : "bg-yellow-500"
                 )} />
                 <span className="text-xs text-white/60">
                   {data?.last_updated 
@@ -194,25 +186,25 @@ export default function Dashboard() {
           <StatCard
             icon={<BarChart3 className="w-5 h-5" />}
             label="Opportunities"
-            value={data?.summary.total_opportunities ?? 0}
+            value={data?.summary.total ?? 0}
             color="cyan"
           />
           <StatCard
             icon={<TrendingUp className="w-5 h-5" />}
-            label="Profitable"
-            value={data?.summary.profitable_count ?? 0}
+            label="NFL Markets"
+            value={data?.summary.by_league?.nfl ?? 0}
             color="profit"
           />
           <StatCard
             icon={<Activity className="w-5 h-5" />}
             label="Avg Difference"
-            value={`${(data?.summary.avg_price_difference_percent ?? 0).toFixed(1)}%`}
+            value={`${(data?.summary.avg_difference ?? 0).toFixed(1)}%`}
             color="purple"
           />
           <StatCard
             icon={<Zap className="w-5 h-5" />}
-            label="Max Profit"
-            value={`${(data?.summary.max_profit_bps ?? 0).toFixed(0)} bps`}
+            label="NBA Markets"
+            value={data?.summary.by_league?.nba ?? 0}
             color="orange"
           />
         </div>
@@ -335,8 +327,15 @@ function StatCard({
 function OpportunityCard({ opportunity, index }: { opportunity: ArbitrageOpportunity; index: number }) {
   const [expanded, setExpanded] = useState(false)
   
-  const isProfitable = opportunity.profitable
+  const isProfitable = opportunity.price_difference_percent > 2
   const profitColor = isProfitable ? 'text-profit' : 'text-white/60'
+  
+  const leagueColors: Record<string, string> = {
+    nfl: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
+    nba: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
+    mlb: 'bg-red-500/20 text-red-400 border-red-500/30',
+    nhl: 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30',
+  }
   
   return (
     <motion.div
@@ -354,17 +353,23 @@ function OpportunityCard({ opportunity, index }: { opportunity: ArbitrageOpportu
         <div className="flex items-start justify-between gap-4 mb-4">
           <div className="flex-1">
             <div className="flex items-center gap-2 mb-2">
-              {isProfitable && (
-                <span className="px-2 py-0.5 rounded text-xs font-medium bg-profit/20 text-profit border border-profit/30">
-                  PROFITABLE
+              <span className={clsx(
+                "px-2 py-0.5 rounded text-xs font-medium uppercase border",
+                leagueColors[opportunity.league] || 'bg-white/10 text-white/60'
+              )}>
+                {opportunity.league}
+              </span>
+              <span className="px-2 py-0.5 rounded text-xs bg-white/5 text-white/50">
+                {opportunity.market_type}
+              </span>
+              {opportunity.team && (
+                <span className="px-2 py-0.5 rounded text-xs bg-electric-purple/20 text-electric-purple">
+                  {opportunity.team}
                 </span>
               )}
-              <span className="px-2 py-0.5 rounded text-xs font-mono bg-white/5 text-white/50">
-                {opportunity.matched_market.kalshi.ticker}
-              </span>
             </div>
             <h3 className="text-sm font-medium text-white/90 line-clamp-2">
-              {opportunity.matched_market.polymarket.question}
+              {opportunity.polymarket.question}
             </h3>
           </div>
           
@@ -380,17 +385,17 @@ function OpportunityCard({ opportunity, index }: { opportunity: ArbitrageOpportu
         <div className="grid grid-cols-2 gap-4">
           <PriceCard
             platform="polymarket"
-            yesPrice={opportunity.poly_yes_price}
-            noPrice={opportunity.poly_no_price}
-            isBuyYes={opportunity.buy_yes_on === 'polymarket'}
-            isBuyNo={opportunity.buy_no_on === 'polymarket'}
+            yesPrice={opportunity.polymarket.yes_price}
+            noPrice={opportunity.polymarket.no_price}
+            isBuyYes={opportunity.buy_on === 'polymarket'}
+            isBuyNo={opportunity.sell_on === 'polymarket'}
           />
           <PriceCard
             platform="kalshi"
-            yesPrice={opportunity.kalshi_yes_price}
-            noPrice={opportunity.kalshi_no_price}
-            isBuyYes={opportunity.buy_yes_on === 'kalshi'}
-            isBuyNo={opportunity.buy_no_on === 'kalshi'}
+            yesPrice={opportunity.kalshi.yes_price}
+            noPrice={opportunity.kalshi.no_price}
+            isBuyYes={opportunity.buy_on === 'kalshi'}
+            isBuyNo={opportunity.sell_on === 'kalshi'}
           />
         </div>
 
@@ -407,25 +412,42 @@ function OpportunityCard({ opportunity, index }: { opportunity: ArbitrageOpportu
                 <div>
                   <div className="text-white/40 text-xs mb-1">Profit Potential</div>
                   <div className={clsx("font-mono font-bold", profitColor)}>
-                    {opportunity.potential_profit_bps.toFixed(0)} bps
+                    {opportunity.profit_bps.toFixed(0)} bps
                   </div>
                 </div>
                 <div>
                   <div className="text-white/40 text-xs mb-1">Match Score</div>
                   <div className="font-mono">
-                    {(opportunity.matched_market.similarity_score * 100).toFixed(0)}%
+                    {(opportunity.match_score * 100).toFixed(0)}%
                   </div>
                 </div>
                 <div>
-                  <div className="text-white/40 text-xs mb-1">Detected</div>
+                  <div className="text-white/40 text-xs mb-1">Match Reason</div>
                   <div className="font-mono text-white/60">
-                    {formatDistanceToNow(new Date(opportunity.detected_at), { addSuffix: true })}
+                    {opportunity.match_reason}
                   </div>
                 </div>
               </div>
               
-              <div className="mt-4 p-3 rounded-lg bg-white/5 text-xs font-mono text-white/60">
-                <span className="text-white/40">Strategy:</span> {opportunity.description}
+              <div className="mt-4 space-y-2">
+                <a 
+                  href={opportunity.polymarket.url} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="block p-3 rounded-lg bg-white/5 text-xs font-mono text-electric-cyan hover:bg-white/10 transition"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  View on Polymarket →
+                </a>
+                <a 
+                  href={opportunity.kalshi.url} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="block p-3 rounded-lg bg-white/5 text-xs font-mono text-electric-purple hover:bg-white/10 transition"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  View on Kalshi →
+                </a>
               </div>
             </motion.div>
           )}
