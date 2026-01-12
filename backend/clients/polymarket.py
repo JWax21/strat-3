@@ -503,7 +503,10 @@ class PolymarketClient:
         """
         Fetch sports-related markets from Polymarket.
         
-        Strategy: Get all active events with pagination and filter for:
+        Strategy: Get all active events with deep pagination (up to offset 6000+)
+        to capture single-game markets which are created earlier and have lower IDs.
+        
+        Filter for:
         1. Single-game markets (identified by slug pattern: sport-team-team-date)
         2. Futures/awards markets (championship, MVP, etc.)
         
@@ -517,7 +520,12 @@ class PolymarketClient:
         seen_ids = set()
         
         # Slug prefixes for single-game markets
-        single_game_prefixes = ['nba-', 'nfl-', 'nhl-', 'mlb-', 'cbb-', 'cfb-', 'wnba-']
+        single_game_prefixes = [
+            'nba-', 'nfl-', 'nhl-', 'mlb-', 'cbb-', 'cfb-', 'wnba-', 
+            'cwbb-',  # Women's college basketball
+            'atp-', 'wta-',  # Tennis
+            'ufc-',  # UFC/MMA
+        ]
         
         # Sports-related keywords for futures/awards
         sports_title_keywords = [
@@ -531,16 +539,18 @@ class PolymarketClient:
             "afc", "nfc", "division", "conference"
         ]
         
-        logger.info("Fetching sports markets from Polymarket (including single-game)...")
+        logger.info("Fetching sports markets from Polymarket (deep pagination for single-game)...")
         
         try:
-            # Fetch more events with pagination to get single-game markets
+            # IMPORTANT: Single-game markets for TODAY are at offset 3000+
+            # because they were created earlier (lower event IDs).
+            # We need to paginate through ~6000 events to get all recent games.
             all_events = []
             offset = 0
-            batch_size = 100
-            max_events = 1000  # Get more events to find single-game markets
+            batch_size = 500  # Increased batch size for efficiency
+            max_offset = 6000  # Go deep enough to find today's games
             
-            while len(all_events) < max_events:
+            while offset < max_offset:
                 params = {
                     "order": "id",
                     "ascending": "false",
@@ -553,14 +563,19 @@ class PolymarketClient:
                 events = data if isinstance(data, list) else data.get("events", [])
                 
                 if not events:
+                    logger.info(f"No more events at offset {offset}")
                     break
                     
                 all_events.extend(events)
                 offset += batch_size
                 
-                await asyncio.sleep(0.1)
+                # Log progress every 1000 events
+                if offset % 1000 == 0:
+                    logger.info(f"Fetched {len(all_events)} events so far (offset {offset})...")
+                
+                await asyncio.sleep(0.05)  # Slightly faster pagination
             
-            logger.info(f"Retrieved {len(all_events)} total events, filtering for sports...")
+            logger.info(f"Retrieved {len(all_events)} total events from Polymarket, filtering for sports...")
             
             single_game_count = 0
             futures_count = 0
