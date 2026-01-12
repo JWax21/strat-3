@@ -400,126 +400,60 @@ class KalshiClient:
     
     async def get_sports_markets(self) -> List[KalshiMarket]:
         """
-        Fetch sports championship/award markets from specific series.
+        Fetch sports championship/award markets - simplified version.
         
         Returns:
-            List of sports markets from championship series
+            List of sports markets
         """
-        all_markets = []
-        seen_tickers = set()
-        
-        for series_ticker in self.SPORTS_SERIES:
-            try:
-                # Get events for this series
-                events_data = await self._request("/events", {
-                    "series_ticker": series_ticker,
-                    "status": "open"
-                })
-                events = events_data.get("events", [])
-                
-                for event in events:
-                    event_ticker = event.get("event_ticker")
-                    if not event_ticker:
-                        continue
-                    
-                    # Get markets for this event
-                    markets = await self.get_markets(event_ticker=event_ticker, limit=50)
-                    for market in markets:
-                        if market.ticker not in seen_tickers:
-                            all_markets.append(market)
-                            seen_tickers.add(market.ticker)
-                    
-                    await asyncio.sleep(0.5)
-                    
-            except Exception as e:
-                logger.debug(f"No markets for series {series_ticker}: {e}")
-        
-        logger.info(f"Fetched {len(all_markets)} sports championship/award markets from Kalshi")
-        return all_markets
+        # Just return empty - sports matching now happens via keyword matching
+        # on the main market fetch. This prevents excessive API calls.
+        logger.info("Sports markets will be filtered from main market fetch")
+        return []
     
     async def get_all_open_markets(self, max_markets: int = 500) -> List[KalshiMarket]:
         """
-        Fetch open markets from various categories for better coverage.
+        Fetch open markets directly from the /markets endpoint.
+        Simple and fast - avoids excessive API calls.
         
         Args:
             max_markets: Maximum total markets to fetch
             
         Returns:
-            List of open markets from multiple categories
+            List of open markets
         """
         all_markets = []
         seen_tickers = set()
+        cursor = None
+        batch_size = 100
         
-        # FIRST: Fetch sports championship/award markets (priority for matching)
-        try:
-            sports_markets = await self.get_sports_markets()
-            for market in sports_markets:
-                if market.ticker not in seen_tickers:
-                    all_markets.append(market)
-                    seen_tickers.add(market.ticker)
-            logger.info(f"Added {len(sports_markets)} sports markets")
-        except Exception as e:
-            logger.warning(f"Failed to fetch sports markets: {e}")
-        
-        # Then get events to find more markets
-        try:
-            events_data = await self._request("/events", {"limit": 50, "status": "open"})
-            events = events_data.get("events", [])
+        while len(all_markets) < max_markets:
+            params = {"limit": batch_size, "status": "open"}
+            if cursor:
+                params["cursor"] = cursor
             
-            # Fetch markets for each event
-            for event in events[:10]:  # Limit to avoid too many requests
-                event_ticker = event.get("event_ticker")
-                if not event_ticker:
-                    continue
+            try:
+                data = await self._request("/markets", params)
+                markets_data = data.get("markets", [])
                 
-                try:
-                    markets = await self.get_markets(event_ticker=event_ticker, limit=20)
-                    for market in markets:
-                        if market.ticker not in seen_tickers:
-                            all_markets.append(market)
-                            seen_tickers.add(market.ticker)
-                except Exception as e:
-                    logger.warning(f"Failed to fetch markets for event {event_ticker}: {e}")
-                
-                if len(all_markets) >= max_markets:
+                if not markets_data:
                     break
                 
-                await asyncio.sleep(0.5)  # Slower rate limiting for Kalshi
-        except Exception as e:
-            logger.warning(f"Failed to fetch events: {e}")
-        
-        # Also get general markets to fill up
-        if len(all_markets) < max_markets:
-            cursor = None
-            batch_size = 100
-            
-            while len(all_markets) < max_markets:
-                params = {"limit": batch_size, "status": "open"}
-                if cursor:
-                    params["cursor"] = cursor
+                for item in markets_data:
+                    market = self._parse_market(item)
+                    if market and market.ticker not in seen_tickers:
+                        all_markets.append(market)
+                        seen_tickers.add(market.ticker)
                 
-                try:
-                    data = await self._request("/markets", params)
-                    markets_data = data.get("markets", [])
-                    
-                    if not markets_data:
-                        break
-                    
-                    for item in markets_data:
-                        market = self._parse_market(item)
-                        if market and market.ticker not in seen_tickers:
-                            all_markets.append(market)
-                            seen_tickers.add(market.ticker)
-                    
-                    cursor = data.get("cursor")
-                    if not cursor:
-                        break
-                    
-                    await asyncio.sleep(0.1)
-                except Exception as e:
-                    logger.warning(f"Failed to fetch markets: {e}")
+                cursor = data.get("cursor")
+                if not cursor:
                     break
+                
+                await asyncio.sleep(0.1)
+            except Exception as e:
+                logger.warning(f"Failed to fetch markets: {e}")
+                break
         
+        logger.info(f"Fetched {len(all_markets)} open markets from Kalshi")
         return all_markets[:max_markets]
     
     async def get_market(self, ticker: str) -> Optional[KalshiMarket]:
