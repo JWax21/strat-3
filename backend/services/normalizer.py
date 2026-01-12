@@ -222,7 +222,8 @@ NFL_TEAMS: Dict[str, str] = {
     
     # NFC West
     "ari": "Arizona Cardinals", "arizona": "Arizona Cardinals", "cardinals": "Arizona Cardinals",
-    "lar": "LA Rams", "la rams": "LA Rams", "rams": "LA Rams", "los angeles rams": "LA Rams",
+    "lar": "LA Rams", "la": "LA Rams",  # Polymarket uses 'la'
+    "la rams": "LA Rams", "rams": "LA Rams", "los angeles rams": "LA Rams",
     "sf": "San Francisco 49ers", "san francisco": "San Francisco 49ers", "49ers": "San Francisco 49ers",
     "niners": "San Francisco 49ers",
     "sea": "Seattle Seahawks", "seattle": "Seattle Seahawks", "seahawks": "Seattle Seahawks",
@@ -236,13 +237,13 @@ NHL_TEAMS: Dict[str, str] = {
     "bos": "Boston Bruins", "boston": "Boston Bruins", "bruins": "Boston Bruins",
     "buf": "Buffalo Sabres", "buffalo": "Buffalo Sabres", "sabres": "Buffalo Sabres",
     "det": "Detroit Red Wings", "detroit": "Detroit Red Wings", "red wings": "Detroit Red Wings",
-    "fla": "Florida Panthers", "florida": "Florida Panthers",
-    "mtl": "Montreal Canadiens", "montreal": "Montreal Canadiens", "canadiens": "Montreal Canadiens",
-    "habs": "Montreal Canadiens",
+    "fla": "Florida Panthers", "florida": "Florida Panthers", "panthers": "Florida Panthers",
+    "mtl": "Montreal Canadiens", "mon": "Montreal Canadiens",  # Polymarket uses 'mon'
+    "montreal": "Montreal Canadiens", "canadiens": "Montreal Canadiens", "habs": "Montreal Canadiens",
     "ott": "Ottawa Senators", "ottawa": "Ottawa Senators", "senators": "Ottawa Senators",
     "sens": "Ottawa Senators",
-    "tbl": "Tampa Bay Lightning", "tampa bay": "Tampa Bay Lightning", "lightning": "Tampa Bay Lightning",
-    "tampa": "Tampa Bay Lightning",
+    "tbl": "Tampa Bay Lightning", "tb": "Tampa Bay Lightning",  # Polymarket uses 'tb'
+    "tampa bay": "Tampa Bay Lightning", "lightning": "Tampa Bay Lightning", "tampa": "Tampa Bay Lightning",
     "tor": "Toronto Maple Leafs", "toronto": "Toronto Maple Leafs", "maple leafs": "Toronto Maple Leafs",
     "leafs": "Toronto Maple Leafs",
     
@@ -250,8 +251,8 @@ NHL_TEAMS: Dict[str, str] = {
     "car": "Carolina Hurricanes", "carolina": "Carolina Hurricanes", "hurricanes": "Carolina Hurricanes",
     "canes": "Carolina Hurricanes",
     "cbj": "Columbus Blue Jackets", "columbus": "Columbus Blue Jackets", "blue jackets": "Columbus Blue Jackets",
-    "njd": "New Jersey Devils", "nj": "New Jersey Devils", "new jersey": "New Jersey Devils", 
-    "devils": "New Jersey Devils",
+    "njd": "New Jersey Devils", "nj": "New Jersey Devils",  # Polymarket uses 'nj'
+    "new jersey": "New Jersey Devils", "devils": "New Jersey Devils",
     "nyi": "New York Islanders", "ny islanders": "New York Islanders", "islanders": "New York Islanders",
     "nyr": "New York Rangers", "ny rangers": "New York Rangers", "rangers": "New York Rangers",
     "phi": "Philadelphia Flyers", "philadelphia": "Philadelphia Flyers", "flyers": "Philadelphia Flyers",
@@ -262,7 +263,7 @@ NHL_TEAMS: Dict[str, str] = {
     
     # Central Division
     "chi": "Chicago Blackhawks", "chicago": "Chicago Blackhawks", "blackhawks": "Chicago Blackhawks",
-    "hawks": "Chicago Blackhawks",
+    # Note: "hawks" is ambiguous (could be Atlanta Hawks NBA), only use in NHL context
     "col": "Colorado Avalanche", "colorado": "Colorado Avalanche", "avalanche": "Colorado Avalanche",
     "avs": "Colorado Avalanche",
     "dal": "Dallas Stars", "dallas": "Dallas Stars", "stars": "Dallas Stars",
@@ -271,19 +272,22 @@ NHL_TEAMS: Dict[str, str] = {
     "preds": "Nashville Predators",
     "stl": "St. Louis Blues", "st louis": "St. Louis Blues", "blues": "St. Louis Blues",
     "saint louis": "St. Louis Blues",
-    "wpg": "Winnipeg Jets", "winnipeg": "Winnipeg Jets",
+    "wpg": "Winnipeg Jets", "winnipeg": "Winnipeg Jets", "jets": "Winnipeg Jets",
     "uta": "Utah Hockey Club", "utah": "Utah Hockey Club",  # Formerly Arizona Coyotes
     
     # Pacific Division
     "ana": "Anaheim Ducks", "anaheim": "Anaheim Ducks", "ducks": "Anaheim Ducks",
-    "cgy": "Calgary Flames", "calgary": "Calgary Flames", "flames": "Calgary Flames",
+    "cgy": "Calgary Flames", "cal": "Calgary Flames",  # Polymarket uses 'cal'
+    "calgary": "Calgary Flames", "flames": "Calgary Flames",
     "edm": "Edmonton Oilers", "edmonton": "Edmonton Oilers", "oilers": "Edmonton Oilers",
-    "lak": "LA Kings", "la": "LA Kings", "la kings": "LA Kings", "kings": "LA Kings",
+    "lak": "LA Kings", "la kings": "LA Kings", "kings": "LA Kings",
     "los angeles kings": "LA Kings",
-    "sjs": "San Jose Sharks", "san jose": "San Jose Sharks", "sharks": "San Jose Sharks",
+    "sjs": "San Jose Sharks", "sj": "San Jose Sharks",  # Polymarket uses 'sj'
+    "san jose": "San Jose Sharks", "sharks": "San Jose Sharks",
     "sea": "Seattle Kraken", "seattle": "Seattle Kraken", "kraken": "Seattle Kraken",
     "van": "Vancouver Canucks", "vancouver": "Vancouver Canucks", "canucks": "Vancouver Canucks",
-    "vgk": "Vegas Golden Knights", "vegas": "Vegas Golden Knights", "golden knights": "Vegas Golden Knights",
+    "vgk": "Vegas Golden Knights", "las": "Vegas Golden Knights",  # Polymarket uses 'las'
+    "vegas": "Vegas Golden Knights", "golden knights": "Vegas Golden Knights",
 }
 
 # =============================================================================
@@ -699,6 +703,7 @@ class MarketNormalizer:
 # REVERSE MAPPINGS: Canonical Name -> Polymarket Abbreviation
 # Used to construct Polymarket slugs from Kalshi game data
 # =============================================================================
+# NBA abbreviations - OFFICIAL Polymarket mappings from /teams endpoint
 NBA_TEAM_TO_ABBREV: Dict[str, str] = {
     "Atlanta Hawks": "atl", "Boston Celtics": "bos", "Brooklyn Nets": "bkn",
     "Charlotte Hornets": "cha", "Chicago Bulls": "chi", "Cleveland Cavaliers": "cle",
@@ -713,6 +718,7 @@ NBA_TEAM_TO_ABBREV: Dict[str, str] = {
     "Washington Wizards": "was",
 }
 
+# NFL abbreviations - OFFICIAL Polymarket mappings from /teams endpoint
 NFL_TEAM_TO_ABBREV: Dict[str, str] = {
     "Buffalo Bills": "buf", "Miami Dolphins": "mia", "New England Patriots": "ne",
     "New York Jets": "nyj", "Baltimore Ravens": "bal", "Cincinnati Bengals": "cin",
@@ -723,25 +729,27 @@ NFL_TEAM_TO_ABBREV: Dict[str, str] = {
     "Philadelphia Eagles": "phi", "Washington Commanders": "was", "Chicago Bears": "chi",
     "Detroit Lions": "det", "Green Bay Packers": "gb", "Minnesota Vikings": "min",
     "Atlanta Falcons": "atl", "Carolina Panthers": "car", "New Orleans Saints": "no",
-    "Tampa Bay Buccaneers": "tb", "Arizona Cardinals": "ari", "LA Rams": "lar",
+    "Tampa Bay Buccaneers": "tb", "Arizona Cardinals": "ari", "LA Rams": "la",  # Polymarket uses 'la'
     "San Francisco 49ers": "sf", "Seattle Seahawks": "sea",
 }
 
+# NHL abbreviations - OFFICIAL Polymarket mappings from /teams endpoint
 NHL_TEAM_TO_ABBREV: Dict[str, str] = {
     "Boston Bruins": "bos", "Buffalo Sabres": "buf", "Detroit Red Wings": "det",
-    "Florida Panthers": "fla", "Montreal Canadiens": "mtl", "Ottawa Senators": "ott",
-    "Tampa Bay Lightning": "tbl", "Toronto Maple Leafs": "tor", 
+    "Florida Panthers": "fla", "Montreal Canadiens": "mon", "Ottawa Senators": "ott",  # Polymarket uses 'mon'
+    "Tampa Bay Lightning": "tb", "Toronto Maple Leafs": "tor",  # Polymarket uses 'tb'
     "Carolina Hurricanes": "car", "Columbus Blue Jackets": "cbj", 
-    "New Jersey Devils": "njd", "New York Islanders": "nyi", "New York Rangers": "nyr",
+    "New Jersey Devils": "nj", "New York Islanders": "nyi", "New York Rangers": "nyr",  # Polymarket uses 'nj'
     "Philadelphia Flyers": "phi", "Pittsburgh Penguins": "pit", "Washington Capitals": "wsh",
     "Chicago Blackhawks": "chi", "Colorado Avalanche": "col", "Dallas Stars": "dal",
     "Minnesota Wild": "min", "Nashville Predators": "nsh", "St. Louis Blues": "stl",
     "Winnipeg Jets": "wpg", "Utah Hockey Club": "uta", "Anaheim Ducks": "ana",
-    "Calgary Flames": "cgy", "Edmonton Oilers": "edm", "LA Kings": "lak",
-    "San Jose Sharks": "sjs", "Seattle Kraken": "sea", "Vancouver Canucks": "van",
-    "Vegas Golden Knights": "vgk",
+    "Calgary Flames": "cal", "Edmonton Oilers": "edm", "LA Kings": "lak",  # Polymarket uses 'cal'
+    "San Jose Sharks": "sj", "Seattle Kraken": "sea", "Vancouver Canucks": "van",  # Polymarket uses 'sj'
+    "Vegas Golden Knights": "las",  # Polymarket uses 'las'
 }
 
+# MLB abbreviations - OFFICIAL Polymarket mappings from /teams endpoint
 MLB_TEAM_TO_ABBREV: Dict[str, str] = {
     "Baltimore Orioles": "bal", "Boston Red Sox": "bos", "New York Yankees": "nyy",
     "Tampa Bay Rays": "tb", "Toronto Blue Jays": "tor", "Chicago White Sox": "cws",
