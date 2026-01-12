@@ -510,11 +510,16 @@ class PolymarketClient:
             Event data or None if not found
         """
         try:
+            # Use query parameter, not path parameter
             data = await self._request(
                 self.gamma_url,
-                f"/events/{slug}"
+                "/events",
+                params={"slug": slug}
             )
-            return data
+            # Returns a list, get first item
+            if isinstance(data, list) and len(data) > 0:
+                return data[0]
+            return None
         except Exception as e:
             logger.debug(f"Event {slug} not found: {e}")
             return None
