@@ -795,9 +795,15 @@ async def get_all_sports_markets():
             "expiration": m.get("expected_expiration_time"),
         })
     
-    # Group by category for easier viewing
-    poly_single_game = [m for m in poly_formatted if "single_game" in m.get("category", "")]
-    poly_futures = [m for m in poly_formatted if "single_game" not in m.get("category", "") and m.get("category", "")]
+    # Group by market type for easier viewing
+    # Polymarket: identify single-game markets by slug pattern (nba-xxx-xxx-YYYY-MM-DD)
+    single_game_slugs = ['nba-', 'nfl-', 'nhl-', 'mlb-', 'cbb-', 'cfb-', 'wnba-', 'cwbb-', 'ufc-']
+    poly_single_game = [m for m in poly_formatted 
+                        if any(m.get("slug", "").lower().startswith(prefix) for prefix in single_game_slugs)
+                        and m.get("away_team") and m.get("home_team")]
+    poly_futures = [m for m in poly_formatted if m not in poly_single_game]
+    
+    # Kalshi: identify by category or series ticker
     kalshi_single_game = [m for m in kalshi_formatted if "single_game" in m.get("category", "")]
     kalshi_futures = [m for m in kalshi_formatted if m.get("category", "") == "futures"]
     
