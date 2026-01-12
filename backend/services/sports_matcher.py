@@ -33,7 +33,8 @@ class League(Enum):
 class MarketType(Enum):
     """Types of sports markets."""
     CHAMPIONSHIP = "championship"  # Who wins the title
-    MVP = "mvp"  # MVP awards
+    MVP_SEASON = "mvp_season"  # Regular season MVP (NFL MVP, NBA MVP, etc.)
+    MVP_GAME = "mvp_game"  # Championship game MVP (Super Bowl MVP, Finals MVP, etc.)
     DIVISION = "division"  # Division/conference winners
     PLAYER_AWARD = "player_award"  # ROY, DPOY, etc.
     GAME_WINNER = "game_winner"  # Single game outcomes
@@ -251,9 +252,44 @@ class SportsMarketMatcher:
         text_lower = text.lower()
         ticker_lower = ticker.lower()
         
-        # MVP
+        # MVP - MUST distinguish between season MVP and championship game MVP
         if "mvp" in text_lower or "sbmvp" in ticker_lower:
-            return MarketType.MVP
+            # Championship game MVP indicators (Super Bowl MVP, Finals MVP, etc.)
+            game_mvp_indicators = [
+                "championship game mvp",
+                "pro football championship game mvp",
+                "super bowl mvp",
+                "finals mvp",
+                "nba finals mvp",
+                "world series mvp",
+                "stanley cup mvp",
+                "sbmvp",  # Kalshi ticker pattern for Super Bowl MVP
+            ]
+            
+            # Check for championship game MVP
+            if any(ind in text_lower for ind in game_mvp_indicators) or "sbmvp" in ticker_lower:
+                return MarketType.MVP_GAME
+            
+            # Season/regular MVP indicators (NFL MVP award, NBA MVP, etc.)
+            season_mvp_indicators = [
+                "nfl mvp award",
+                "nfl mvp",
+                "nba mvp award", 
+                "nba mvp",
+                "mlb mvp",
+                "nhl mvp",
+                "mvp award",
+                "regular season mvp",
+                "season mvp",
+            ]
+            
+            if any(ind in text_lower for ind in season_mvp_indicators):
+                return MarketType.MVP_SEASON
+            
+            # Default MVP to season if not clearly a game MVP
+            # But be cautious - log for investigation
+            logger.warning(f"Ambiguous MVP market detected, defaulting to season: {text[:80]}")
+            return MarketType.MVP_SEASON
         
         # Championships
         if any(champ in text_lower for champ in ["super bowl", "nba finals", "stanley cup", "world series", "championship"]):
@@ -367,7 +403,7 @@ class SportsMarketMatcher:
         
         # Extract player name (for MVP/award markets)
         player = None
-        if market_type in [MarketType.MVP, MarketType.PLAYER_AWARD, MarketType.PLAYER_PROP]:
+        if market_type in [MarketType.MVP_SEASON, MarketType.MVP_GAME, MarketType.PLAYER_AWARD, MarketType.PLAYER_PROP]:
             # Try to extract player name from Kalshi format: "Will [Player Name] win..."
             match = re.search(r'will\s+([a-z\s]+)\s+win', question.lower())
             if match:
@@ -505,8 +541,15 @@ class SportsMarketMatcher:
             
             return score, "championship_match"
         
-        # MVP markets: match on player + championship + year
-        if poly_info.market_type == MarketType.MVP:
+        # MVP markets: match on player + year
+        # IMPORTANT: MVP_SEASON and MVP_GAME are different and should NOT match each other
+        if poly_info.market_type in [MarketType.MVP_SEASON, MarketType.MVP_GAME]:
+            # Log the MVP types for debugging
+            logger.debug(
+                f"MVP comparison: poly={poly_info.market_type.value}, kalshi={kalshi_info.market_type.value} "
+                f"| poly_q={poly_info.raw_question[:50]}... | kalshi_q={kalshi_info.raw_question[:50]}..."
+            )
+            
             if poly_info.player and kalshi_info.player:
                 # Fuzzy player name matching
                 if poly_info.player.lower() == kalshi_info.player.lower():
@@ -520,7 +563,8 @@ class SportsMarketMatcher:
                 if poly_info.year == kalshi_info.year:
                     score += 0.4
             
-            return score, "mvp_match"
+            mvp_type = "season" if poly_info.market_type == MarketType.MVP_SEASON else "game"
+            return score, f"mvp_{mvp_type}_match"
         
         # Division/Conference markets
         if poly_info.market_type == MarketType.DIVISION:
