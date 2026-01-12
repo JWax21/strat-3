@@ -38,7 +38,9 @@ class MarketType(Enum):
     MVP_GAME = "mvp_game"  # Championship game MVP (Super Bowl MVP, Finals MVP, etc.)
     DIVISION = "division"  # Division/conference winners
     PLAYER_AWARD = "player_award"  # ROY, DPOY, etc.
-    GAME_WINNER = "game_winner"  # Single game outcomes
+    GAME_WINNER = "game_winner"  # Single game outcomes (moneyline)
+    SPREAD = "spread"  # Point spread bets (e.g., Lakers -9.5)
+    OVER_UNDER = "over_under"  # Total points/goals bets (e.g., O/U 250.5)
     PLAYER_PROP = "player_prop"  # Player stats in a game
     SEASON_WINS = "season_wins"  # Win totals
     PARLAY = "parlay"  # Multi-leg bets
@@ -256,7 +258,33 @@ class SportsMarketMatcher:
         ticker_lower = ticker.lower()
         slug_lower = slug.lower()
         
-        # SINGLE GAME MARKETS - Check first as they're most specific
+        # SPREAD MARKETS - Check FIRST to avoid misclassifying as game winner
+        # Polymarket: "Spread: Lakers (-9.5)", "Spread: Oilers (-1.5)"
+        # Also check for spread patterns without the "Spread:" prefix
+        spread_indicators = [
+            "spread:" in text_lower,
+            "spread" in slug_lower,
+            bool(re.search(r'\(\-?\d+\.?\d*\)', text_lower)),  # e.g., (-9.5), (+3), (-1.5)
+            " -" in text_lower and ".5)" in text_lower,  # Lakers -9.5
+            "handicap" in text_lower,
+        ]
+        if any(spread_indicators):
+            return MarketType.SPREAD
+        
+        # OVER/UNDER MARKETS - Check before game winner
+        # Polymarket: "Jazz vs. Cavaliers: O/U 250.5", "Over/Under 48.5"
+        over_under_indicators = [
+            "o/u" in text_lower,
+            "over/under" in text_lower,
+            "over under" in text_lower,
+            "total points" in text_lower,
+            "total goals" in text_lower,
+            bool(re.search(r'\b(over|under)\s*\d+\.?\d*\b', text_lower)),  # over 250.5, under 48
+        ]
+        if any(over_under_indicators):
+            return MarketType.OVER_UNDER
+        
+        # SINGLE GAME (MONEYLINE) MARKETS - Who wins the game outright
         # Polymarket slugs: nba-uta-cle-2026-01-12, nfl-hou-pit-2026-01-12
         # Kalshi tickers: KXNBAGAME-26JAN12UTACLE, KXNFLGAME-26JAN12HOUPIT
         single_game_indicators = [
