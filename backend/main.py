@@ -523,8 +523,8 @@ async def fetch_and_analyze_sports():
     logger.info("Starting sports market fetch and analysis...")
     
     try:
-        # Fetch from both platforms
-        poly_task = state.polymarket_client.get_all_active_markets(max_markets=500)
+        # Fetch sports-specific markets from both platforms
+        poly_task = state.polymarket_client.get_sports_markets(max_markets=500)
         kalshi_task = state.kalshi_client.get_all_open_markets(max_markets=500)
         
         poly_markets, kalshi_markets = await asyncio.gather(

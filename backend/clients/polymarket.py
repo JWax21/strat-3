@@ -189,7 +189,8 @@ class PolymarketClient:
     
     async def get_all_active_markets(self, max_markets: int = 500) -> List[PolymarketMarket]:
         """
-        Fetch all active markets with pagination.
+        Fetch all active markets using both the /markets and /events endpoints
+        for comprehensive coverage.
         
         Args:
             max_markets: Maximum total markets to fetch
@@ -198,25 +199,45 @@ class PolymarketClient:
             List of all active markets
         """
         all_markets = []
-        offset = 0
-        batch_size = 100
+        seen_ids = set()
         
-        while len(all_markets) < max_markets:
-            markets = await self.get_markets(
-                limit=batch_size,
-                offset=offset,
-                active=True
-            )
+        # Strategy 1: Get markets from /events endpoint (better for nested markets)
+        logger.info("Fetching markets from /events endpoint...")
+        try:
+            event_markets = await self.get_markets_from_events(max_markets=max_markets)
+            for market in event_markets:
+                if market.id not in seen_ids:
+                    all_markets.append(market)
+                    seen_ids.add(market.id)
+        except Exception as e:
+            logger.warning(f"Failed to fetch from events: {e}")
+        
+        # Strategy 2: Also get from /markets endpoint to catch any missed
+        if len(all_markets) < max_markets:
+            logger.info("Fetching additional markets from /markets endpoint...")
+            offset = 0
+            batch_size = 100
             
-            if not markets:
-                break
+            while len(all_markets) < max_markets:
+                markets = await self.get_markets(
+                    limit=batch_size,
+                    offset=offset,
+                    active=True,
+                    closed=False
+                )
                 
-            all_markets.extend(markets)
-            offset += batch_size
-            
-            # Small delay between batches
-            await asyncio.sleep(0.1)
+                if not markets:
+                    break
+                
+                for market in markets:
+                    if market.id not in seen_ids:
+                        all_markets.append(market)
+                        seen_ids.add(market.id)
+                        
+                offset += batch_size
+                await asyncio.sleep(0.1)
         
+        logger.info(f"Total active markets fetched: {len(all_markets)}")
         return all_markets[:max_markets]
     
     async def get_market_prices(self, token_ids: List[str]) -> Dict[str, float]:
@@ -274,24 +295,116 @@ class PolymarketClient:
             logger.error(f"Failed to fetch market {market_id}: {e}")
             return None
     
-    async def get_events(self, limit: int = 100) -> List[Dict[str, Any]]:
+    async def get_events(
+        self, 
+        limit: int = 100,
+        offset: int = 0,
+        active: bool = True,
+        closed: bool = False,
+        tag: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """
-        Fetch events from the Gamma API.
+        Fetch active events from the Gamma API.
         
         Events can contain multiple markets.
         
         Args:
             limit: Maximum number of events to return
+            offset: Pagination offset
+            active: Include active events
+            closed: Include closed events
+            tag: Filter by tag (e.g., "sports", "politics")
             
         Returns:
             List of event data
         """
-        data = await self._request(
-            self.gamma_url,
-            "/events",
-            params={"limit": limit, "active": "true"}
-        )
+        params = {
+            "limit": min(limit, 100),
+            "offset": offset,
+            "active": str(active).lower(),
+            "closed": str(closed).lower(),
+        }
+        if tag:
+            params["tag"] = tag
+            
+        data = await self._request(self.gamma_url, "/events", params)
         return data if isinstance(data, list) else data.get("events", [])
+    
+    async def get_all_active_events(self, max_events: int = 200) -> List[Dict[str, Any]]:
+        """
+        Fetch all active events with pagination.
+        
+        Args:
+            max_events: Maximum total events to fetch
+            
+        Returns:
+            List of all active events
+        """
+        all_events = []
+        offset = 0
+        batch_size = 100
+        
+        while len(all_events) < max_events:
+            events = await self.get_events(
+                limit=batch_size,
+                offset=offset,
+                active=True,
+                closed=False
+            )
+            
+            if not events:
+                break
+                
+            all_events.extend(events)
+            offset += batch_size
+            
+            await asyncio.sleep(0.1)
+        
+        logger.info(f"Fetched {len(all_events)} active events from Polymarket")
+        return all_events[:max_events]
+    
+    async def get_markets_from_events(self, max_markets: int = 500) -> List[PolymarketMarket]:
+        """
+        Fetch markets by first getting active events, then extracting their markets.
+        This provides better coverage than the /markets endpoint alone.
+        
+        Args:
+            max_markets: Maximum total markets to fetch
+            
+        Returns:
+            List of markets from active events
+        """
+        all_markets = []
+        seen_ids = set()
+        
+        # Get active events
+        events = await self.get_all_active_events(max_events=200)
+        
+        for event in events:
+            # Each event can have multiple markets
+            event_markets = event.get("markets", [])
+            
+            for market_data in event_markets:
+                if len(all_markets) >= max_markets:
+                    break
+                    
+                market_id = market_data.get("id", "")
+                if market_id in seen_ids:
+                    continue
+                    
+                try:
+                    market = self._parse_market(market_data)
+                    if market:
+                        all_markets.append(market)
+                        seen_ids.add(market_id)
+                except Exception as e:
+                    logger.warning(f"Failed to parse market from event: {e}")
+                    
+            if len(all_markets) >= max_markets:
+                break
+        
+        logger.info(f"Extracted {len(all_markets)} markets from {len(events)} events")
+        return all_markets
     
     def _parse_market(self, data: Dict[str, Any]) -> Optional[PolymarketMarket]:
         """
@@ -385,4 +498,95 @@ class PolymarketClient:
         except Exception as e:
             logger.error(f"Search failed: {e}")
             return []
+    
+    async def get_sports_markets(self, max_markets: int = 500) -> List[PolymarketMarket]:
+        """
+        Fetch sports-related markets from Polymarket.
+        
+        Uses multiple strategies:
+        1. Search for sports keywords
+        2. Get events tagged with sports
+        3. Filter by category
+        
+        Args:
+            max_markets: Maximum markets to return
+            
+        Returns:
+            List of sports-related markets
+        """
+        all_sports_markets = []
+        seen_ids = set()
+        
+        # Sports keywords to search for
+        sports_keywords = [
+            "NFL", "Super Bowl", "NBA", "NBA Finals", "MLB", "World Series",
+            "NHL", "Stanley Cup", "UFC", "MMA", "soccer", "World Cup",
+            "college football", "NCAA", "championship", "playoffs",
+            "MVP", "rookie of the year", "Pro Football", "Pro Basketball",
+            "Pro Baseball", "Pro Hockey"
+        ]
+        
+        # Strategy 1: Search by sports keywords
+        for keyword in sports_keywords:
+            if len(all_sports_markets) >= max_markets:
+                break
+                
+            try:
+                markets = await self.search_markets(keyword, limit=50)
+                for market in markets:
+                    if market.id not in seen_ids:
+                        all_sports_markets.append(market)
+                        seen_ids.add(market.id)
+                        
+                await asyncio.sleep(0.1)  # Rate limiting
+            except Exception as e:
+                logger.warning(f"Failed to search for '{keyword}': {e}")
+        
+        # Strategy 2: Get markets from events and filter for sports
+        try:
+            events = await self.get_all_active_events(max_events=200)
+            
+            sports_categories = {"sports", "nfl", "nba", "mlb", "nhl", "soccer", "ufc"}
+            sports_tags = {"sports", "nfl", "nba", "mlb", "nhl", "soccer", "ufc", 
+                          "super bowl", "world series", "stanley cup", "championship"}
+            
+            for event in events:
+                if len(all_sports_markets) >= max_markets:
+                    break
+                    
+                # Check if event is sports-related
+                event_tags = set(t.lower() for t in event.get("tags", []))
+                event_category = event.get("category", "").lower()
+                event_title = event.get("title", "").lower()
+                
+                is_sports = (
+                    event_category in sports_categories or
+                    bool(event_tags & sports_tags) or
+                    any(kw.lower() in event_title for kw in ["NFL", "NBA", "MLB", "NHL", 
+                        "Super Bowl", "World Series", "Stanley Cup", "championship", 
+                        "playoffs", "MVP", "football", "basketball", "baseball", "hockey"])
+                )
+                
+                if is_sports:
+                    for market_data in event.get("markets", []):
+                        if len(all_sports_markets) >= max_markets:
+                            break
+                            
+                        market_id = market_data.get("id", "")
+                        if market_id in seen_ids:
+                            continue
+                            
+                        try:
+                            market = self._parse_market(market_data)
+                            if market:
+                                all_sports_markets.append(market)
+                                seen_ids.add(market_id)
+                        except Exception as e:
+                            logger.warning(f"Failed to parse sports market: {e}")
+                            
+        except Exception as e:
+            logger.warning(f"Failed to fetch sports events: {e}")
+        
+        logger.info(f"Found {len(all_sports_markets)} sports markets on Polymarket")
+        return all_sports_markets[:max_markets]
 
