@@ -1,0 +1,647 @@
+"""
+Kalshi API Client
+
+Handles communication with Kalshi's trading API.
+Structure: Series → Events → Markets
+
+Documentation: https://docs.kalshi.com/
+"""
+import httpx
+import asyncio
+import logging
+from typing import List, Dict, Any, Optional
+from datetime import datetime
+from dataclasses import dataclass
+from enum import Enum
+
+from config import get_settings
+from utils.rate_limiter import RateLimiterManager
+
+logger = logging.getLogger(__name__)
+
+
+class KalshiMarketStatus(str, Enum):
+    """Kalshi market status values."""
+    OPEN = "open"
+    CLOSED = "closed"
+    SETTLED = "settled"
+
+
+@dataclass
+class KalshiSeries:
+    """Kalshi series data (collection of related events)."""
+    ticker: str
+    title: str
+    category: str
+    tags: List[str]
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "ticker": self.ticker,
+            "title": self.title,
+            "category": self.category,
+            "tags": self.tags
+        }
+
+
+@dataclass
+class KalshiEvent:
+    """Kalshi event data (specific occurrence within a series)."""
+    event_ticker: str
+    series_ticker: str
+    title: str
+    subtitle: str
+    category: str
+    mutually_exclusive: bool
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "event_ticker": self.event_ticker,
+            "series_ticker": self.series_ticker,
+            "title": self.title,
+            "subtitle": self.subtitle,
+            "category": self.category,
+            "mutually_exclusive": self.mutually_exclusive
+        }
+
+
+@dataclass
+class KalshiMarket:
+    """Normalized Kalshi market data."""
+    ticker: str
+    event_ticker: str
+    series_ticker: str
+    title: str
+    subtitle: str
+    question: str  # Combined title for matching
+    yes_price: float  # Price in cents (0-100) -> converted to 0-1
+    no_price: float
+    yes_bid: float
+    yes_ask: float
+    no_bid: float
+    no_ask: float
+    volume: int
+    volume_24h: int
+    open_interest: int
+    status: str
+    close_time: Optional[datetime]
+    result: Optional[str]
+    category: str
+    
+    @property
+    def mid_price(self) -> float:
+        """Get the mid price between bid and ask."""
+        if self.yes_bid and self.yes_ask:
+            return (self.yes_bid + self.yes_ask) / 2
+        return self.yes_price
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary representation."""
+        return {
+            "id": self.ticker,
+            "ticker": self.ticker,
+            "event_ticker": self.event_ticker,
+            "series_ticker": self.series_ticker,
+            "title": self.title,
+            "subtitle": self.subtitle,
+            "question": self.question,
+            "yes_price": self.yes_price,
+            "no_price": self.no_price,
+            "yes_bid": self.yes_bid,
+            "yes_ask": self.yes_ask,
+            "no_bid": self.no_bid,
+            "no_ask": self.no_ask,
+            "mid_price": self.mid_price,
+            "volume": self.volume,
+            "volume_24h": self.volume_24h,
+            "open_interest": self.open_interest,
+            "status": self.status,
+            "close_time": self.close_time.isoformat() if self.close_time else None,
+            "result": self.result,
+            "category": self.category,
+            "platform": "kalshi"
+        }
+
+
+class KalshiClient:
+    """
+    Client for interacting with Kalshi's trading API.
+    
+    Kalshi uses a hierarchical structure:
+    - Series: A category of related events (e.g., "US Presidential Election")
+    - Events: Specific occurrences (e.g., "2024 Presidential Election Winner")
+    - Markets: Trading contracts (e.g., "Will Biden win?")
+    
+    Implements rate limiting to respect API constraints.
+    """
+    
+    def __init__(self):
+        settings = get_settings()
+        self.base_url = settings.kalshi_api_url
+        self.rate_limiter = RateLimiterManager.get_limiter(
+            "kalshi",
+            settings.kalshi_rate_limit
+        )
+        self._client: Optional[httpx.AsyncClient] = None
+    
+    async def _get_client(self) -> httpx.AsyncClient:
+        """Get or create the HTTP client."""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(
+                timeout=30.0,
+                headers={
+                    "Accept": "application/json",
+                    "User-Agent": "ArbitragePlatform/1.0"
+                }
+            )
+        return self._client
+    
+    async def close(self) -> None:
+        """Close the HTTP client."""
+        if self._client and not self._client.is_closed:
+            await self._client.aclose()
+    
+    async def _request(
+        self,
+        endpoint: str,
+        params: Optional[Dict] = None
+    ) -> Dict[str, Any]:
+        """
+        Make a rate-limited request to the Kalshi API.
+        
+        Args:
+            endpoint: API endpoint path
+            params: Query parameters
+            
+        Returns:
+            JSON response data
+        """
+        await self.rate_limiter.acquire()
+        
+        client = await self._get_client()
+        url = f"{self.base_url}{endpoint}"
+        
+        try:
+            response = await client.get(url, params=params)
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP error from Kalshi: {e.response.status_code} - {e.response.text}")
+            raise
+        except Exception as e:
+            logger.error(f"Error fetching from Kalshi: {e}")
+            raise
+    
+    async def get_exchange_status(self) -> Dict[str, Any]:
+        """
+        Check the exchange status.
+        
+        Returns:
+            Exchange status information
+        """
+        return await self._request("/exchange/status")
+    
+    async def get_series_list(self, limit: int = 100, cursor: str = None) -> List[KalshiSeries]:
+        """
+        Fetch list of all series.
+        
+        Args:
+            limit: Maximum number of series to return
+            cursor: Pagination cursor
+            
+        Returns:
+            List of series objects
+        """
+        params = {"limit": limit}
+        if cursor:
+            params["cursor"] = cursor
+        
+        data = await self._request("/series", params)
+        
+        series_list = []
+        for item in data.get("series", []):
+            series = KalshiSeries(
+                ticker=item.get("ticker", ""),
+                title=item.get("title", ""),
+                category=item.get("category", ""),
+                tags=item.get("tags", [])
+            )
+            series_list.append(series)
+        
+        return series_list
+    
+    async def get_series(self, series_ticker: str) -> Optional[KalshiSeries]:
+        """
+        Fetch a specific series by ticker.
+        
+        Args:
+            series_ticker: The series ticker
+            
+        Returns:
+            Series object or None
+        """
+        try:
+            data = await self._request(f"/series/{series_ticker}")
+            series_data = data.get("series", data)
+            
+            return KalshiSeries(
+                ticker=series_data.get("ticker", ""),
+                title=series_data.get("title", ""),
+                category=series_data.get("category", ""),
+                tags=series_data.get("tags", [])
+            )
+        except Exception as e:
+            logger.error(f"Failed to fetch series {series_ticker}: {e}")
+            return None
+    
+    async def get_events(
+        self,
+        series_ticker: str = None,
+        status: str = None,
+        limit: int = 100,
+        cursor: str = None
+    ) -> List[KalshiEvent]:
+        """
+        Fetch events, optionally filtered by series.
+        
+        Args:
+            series_ticker: Filter by series ticker
+            status: Filter by status (e.g., "open")
+            limit: Maximum results
+            cursor: Pagination cursor
+            
+        Returns:
+            List of event objects
+        """
+        params = {"limit": limit}
+        if series_ticker:
+            params["series_ticker"] = series_ticker
+        if status:
+            params["status"] = status
+        if cursor:
+            params["cursor"] = cursor
+        
+        data = await self._request("/events", params)
+        
+        events = []
+        for item in data.get("events", []):
+            event = KalshiEvent(
+                event_ticker=item.get("event_ticker", ""),
+                series_ticker=item.get("series_ticker", ""),
+                title=item.get("title", ""),
+                subtitle=item.get("sub_title", item.get("subtitle", "")),
+                category=item.get("category", ""),
+                mutually_exclusive=item.get("mutually_exclusive", False)
+            )
+            events.append(event)
+        
+        return events
+    
+    async def get_event(self, event_ticker: str) -> Optional[KalshiEvent]:
+        """
+        Fetch a specific event by ticker.
+        
+        Args:
+            event_ticker: The event ticker
+            
+        Returns:
+            Event object or None
+        """
+        try:
+            data = await self._request(f"/events/{event_ticker}")
+            item = data.get("event", data)
+            
+            return KalshiEvent(
+                event_ticker=item.get("event_ticker", ""),
+                series_ticker=item.get("series_ticker", ""),
+                title=item.get("title", ""),
+                subtitle=item.get("sub_title", item.get("subtitle", "")),
+                category=item.get("category", ""),
+                mutually_exclusive=item.get("mutually_exclusive", False)
+            )
+        except Exception as e:
+            logger.error(f"Failed to fetch event {event_ticker}: {e}")
+            return None
+    
+    async def get_markets(
+        self,
+        event_ticker: str = None,
+        series_ticker: str = None,
+        status: str = None,
+        limit: int = 100,
+        cursor: str = None
+    ) -> List[KalshiMarket]:
+        """
+        Fetch markets, optionally filtered.
+        
+        Args:
+            event_ticker: Filter by event ticker
+            series_ticker: Filter by series ticker
+            status: Filter by status ("open", "closed", "settled")
+            limit: Maximum results
+            cursor: Pagination cursor
+            
+        Returns:
+            List of market objects
+        """
+        params = {"limit": limit}
+        if event_ticker:
+            params["event_ticker"] = event_ticker
+        if series_ticker:
+            params["series_ticker"] = series_ticker
+        if status:
+            params["status"] = status
+        if cursor:
+            params["cursor"] = cursor
+        
+        data = await self._request("/markets", params)
+        
+        markets = []
+        for item in data.get("markets", []):
+            market = self._parse_market(item)
+            if market:
+                markets.append(market)
+        
+        return markets
+    
+    # Sports series tickers for championship/award markets
+    SPORTS_SERIES = [
+        # NFL - Championships
+        "KXNFLNFCCHAMP",   # NFC Champion
+        "KXNFLAFCCHAMP",   # AFC Champion (if exists)
+        "KXNFLSBMVP",      # Super Bowl MVP
+        "KXNFLNFCWEST",    # NFC West Winner
+        "KXNFLNFCNORTH",   # NFC North Winner
+        "KXNFLAFCSOUTH",   # AFC South Winner
+        "KXNFLAFCNORTH",   # AFC North
+        "KXNFLDPOY",       # Defensive Player of Year
+        "KXNFLOROTY",      # Offensive Rookie of Year
+        "KXNFLHALLOFFAME", # Hall of Fame
+        "KXLEADERNFLRUSHYDS", # Rushing yards leader
+        # NBA - Championships
+        "KXNBA",           # NBA Championship
+        "KXNBAROY",        # NBA Rookie of the Year
+        "KXNBAATLANTIC",   # NBA Atlantic Division
+        "KXLEADERNBAPTS",  # PPG Leader
+        "KXNBAWINRECORD",  # Win records
+        "KXRECORDNBABEST", # Best Record
+        # NHL
+        "KXNHLEAST",       # Eastern Conference
+        "KXNHLRICHARD",    # Richard Trophy
+        # MLB
+        "KXMLB",           # World Series
+        "KXMLBNLEAST",     # NL East Winner
+        "KXMLBALROTY",     # AL Rookie of Year
+        # Soccer
+        "KXMWORLDCUP",     # Men's World Cup
+        # College
+        "KXNCAAF",         # NCAAF Championship
+    ]
+    
+    async def get_sports_markets(self) -> List[KalshiMarket]:
+        """
+        Fetch sports championship/award markets from specific series.
+        
+        Returns:
+            List of sports markets from championship series
+        """
+        all_markets = []
+        seen_tickers = set()
+        
+        for series_ticker in self.SPORTS_SERIES:
+            try:
+                # Get events for this series
+                events_data = await self._request("/events", {
+                    "series_ticker": series_ticker,
+                    "status": "open"
+                })
+                events = events_data.get("events", [])
+                
+                for event in events:
+                    event_ticker = event.get("event_ticker")
+                    if not event_ticker:
+                        continue
+                    
+                    # Get markets for this event
+                    markets = await self.get_markets(event_ticker=event_ticker, limit=50)
+                    for market in markets:
+                        if market.ticker not in seen_tickers:
+                            all_markets.append(market)
+                            seen_tickers.add(market.ticker)
+                    
+                    await asyncio.sleep(0.5)
+                    
+            except Exception as e:
+                logger.debug(f"No markets for series {series_ticker}: {e}")
+        
+        logger.info(f"Fetched {len(all_markets)} sports championship/award markets from Kalshi")
+        return all_markets
+    
+    async def get_all_open_markets(self, max_markets: int = 500) -> List[KalshiMarket]:
+        """
+        Fetch open markets from various categories for better coverage.
+        
+        Args:
+            max_markets: Maximum total markets to fetch
+            
+        Returns:
+            List of open markets from multiple categories
+        """
+        all_markets = []
+        seen_tickers = set()
+        
+        # FIRST: Fetch sports championship/award markets (priority for matching)
+        try:
+            sports_markets = await self.get_sports_markets()
+            for market in sports_markets:
+                if market.ticker not in seen_tickers:
+                    all_markets.append(market)
+                    seen_tickers.add(market.ticker)
+            logger.info(f"Added {len(sports_markets)} sports markets")
+        except Exception as e:
+            logger.warning(f"Failed to fetch sports markets: {e}")
+        
+        # Then get events to find more markets
+        try:
+            events_data = await self._request("/events", {"limit": 50, "status": "open"})
+            events = events_data.get("events", [])
+            
+            # Fetch markets for each event
+            for event in events[:10]:  # Limit to avoid too many requests
+                event_ticker = event.get("event_ticker")
+                if not event_ticker:
+                    continue
+                
+                try:
+                    markets = await self.get_markets(event_ticker=event_ticker, limit=20)
+                    for market in markets:
+                        if market.ticker not in seen_tickers:
+                            all_markets.append(market)
+                            seen_tickers.add(market.ticker)
+                except Exception as e:
+                    logger.warning(f"Failed to fetch markets for event {event_ticker}: {e}")
+                
+                if len(all_markets) >= max_markets:
+                    break
+                
+                await asyncio.sleep(0.5)  # Slower rate limiting for Kalshi
+        except Exception as e:
+            logger.warning(f"Failed to fetch events: {e}")
+        
+        # Also get general markets to fill up
+        if len(all_markets) < max_markets:
+            cursor = None
+            batch_size = 100
+            
+            while len(all_markets) < max_markets:
+                params = {"limit": batch_size, "status": "open"}
+                if cursor:
+                    params["cursor"] = cursor
+                
+                try:
+                    data = await self._request("/markets", params)
+                    markets_data = data.get("markets", [])
+                    
+                    if not markets_data:
+                        break
+                    
+                    for item in markets_data:
+                        market = self._parse_market(item)
+                        if market and market.ticker not in seen_tickers:
+                            all_markets.append(market)
+                            seen_tickers.add(market.ticker)
+                    
+                    cursor = data.get("cursor")
+                    if not cursor:
+                        break
+                    
+                    await asyncio.sleep(0.1)
+                except Exception as e:
+                    logger.warning(f"Failed to fetch markets: {e}")
+                    break
+        
+        return all_markets[:max_markets]
+    
+    async def get_market(self, ticker: str) -> Optional[KalshiMarket]:
+        """
+        Fetch a specific market by ticker.
+        
+        Args:
+            ticker: The market ticker
+            
+        Returns:
+            Market object or None
+        """
+        try:
+            data = await self._request(f"/markets/{ticker}")
+            return self._parse_market(data.get("market", data))
+        except Exception as e:
+            logger.error(f"Failed to fetch market {ticker}: {e}")
+            return None
+    
+    async def get_orderbook(self, ticker: str, depth: int = 10) -> Dict[str, Any]:
+        """
+        Fetch the orderbook for a market.
+        
+        Args:
+            ticker: Market ticker
+            depth: Number of price levels to return
+            
+        Returns:
+            Orderbook data with bids and asks
+        """
+        data = await self._request(
+            f"/markets/{ticker}/orderbook",
+            params={"depth": depth}
+        )
+        return data.get("orderbook", data)
+    
+    def _parse_market(self, data: Dict[str, Any]) -> Optional[KalshiMarket]:
+        """
+        Parse raw API data into a KalshiMarket object.
+        
+        Args:
+            data: Raw market data from API
+            
+        Returns:
+            Normalized market object
+        """
+        if not data:
+            return None
+        
+        # Parse close time
+        close_time = None
+        if data.get("close_time"):
+            try:
+                close_time = datetime.fromisoformat(
+                    data["close_time"].replace("Z", "+00:00")
+                )
+            except:
+                pass
+        
+        # Kalshi prices are in cents (0-100), convert to decimal (0-1)
+        def cents_to_decimal(cents: Any) -> float:
+            if cents is None:
+                return 0.0
+            return float(cents) / 100.0
+        
+        # Get yes price - prefer last_price, fallback to yes_ask
+        yes_price = cents_to_decimal(
+            data.get("last_price") or 
+            data.get("yes_ask") or 
+            data.get("yes_bid") or 
+            50  # Default to 50 cents if no price data
+        )
+        
+        # Construct question from title and subtitle
+        title = data.get("title", "")
+        subtitle = data.get("subtitle", data.get("sub_title", ""))
+        question = f"{title} - {subtitle}" if subtitle else title
+        
+        return KalshiMarket(
+            ticker=data.get("ticker", ""),
+            event_ticker=data.get("event_ticker", ""),
+            series_ticker=data.get("series_ticker", ""),
+            title=title,
+            subtitle=subtitle,
+            question=question,
+            yes_price=yes_price,
+            no_price=1.0 - yes_price,
+            yes_bid=cents_to_decimal(data.get("yes_bid")),
+            yes_ask=cents_to_decimal(data.get("yes_ask")),
+            no_bid=cents_to_decimal(data.get("no_bid")),
+            no_ask=cents_to_decimal(data.get("no_ask")),
+            volume=int(data.get("volume", 0) or 0),
+            volume_24h=int(data.get("volume_24h", 0) or 0),
+            open_interest=int(data.get("open_interest", 0) or 0),
+            status=data.get("status", ""),
+            close_time=close_time,
+            result=data.get("result"),
+            category=data.get("category", "")
+        )
+    
+    async def search_markets(self, query: str) -> List[KalshiMarket]:
+        """
+        Search for markets matching a query.
+        
+        Note: Kalshi doesn't have a direct search endpoint,
+        so we fetch markets and filter locally.
+        
+        Args:
+            query: Search query string
+            
+        Returns:
+            Matching markets
+        """
+        markets = await self.get_all_open_markets(max_markets=500)
+        
+        query_lower = query.lower()
+        matching = [
+            m for m in markets 
+            if query_lower in m.title.lower() or 
+               query_lower in m.subtitle.lower() or
+               query_lower in m.ticker.lower()
+        ]
+        
+        return matching
+
