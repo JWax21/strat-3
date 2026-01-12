@@ -25,6 +25,7 @@ interface ArbitrageOpportunity {
     yes_price: number
     no_price: number
     url: string
+    end_date: string | null
   }
   kalshi: {
     id: string
@@ -32,6 +33,8 @@ interface ArbitrageOpportunity {
     yes_price: number
     no_price: number
     url: string
+    expected_expiration_time: string | null
+    close_time: string | null
   }
   league: string
   market_type: string
@@ -64,6 +67,7 @@ export default function Dashboard() {
   const [error, setError] = useState<string | null>(null)
   const [minDifference, setMinDifference] = useState<number>(2)
   const [searchQuery, setSearchQuery] = useState('')
+  const [expiringWithin48h, setExpiringWithin48h] = useState(false)
 
   const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
   const isLocalhost = API_BASE.includes('localhost')
@@ -76,7 +80,11 @@ export default function Dashboard() {
       return
     }
     try {
-      const response = await fetch(`${API_BASE}/api/sports/arbitrage?min_difference=${minDifference}&limit=100`)
+      let url = `${API_BASE}/api/sports/arbitrage?min_difference=${minDifference}&limit=100`
+      if (expiringWithin48h) {
+        url += '&expiring_within_hours=48'
+      }
+      const response = await fetch(url)
       if (!response.ok) throw new Error('Failed to fetch data')
       const result = await response.json()
       setData(result)
@@ -86,7 +94,7 @@ export default function Dashboard() {
     } finally {
       setLoading(false)
     }
-  }, [minDifference])
+  }, [minDifference, expiringWithin48h])
 
   const triggerRefresh = async () => {
     setRefreshing(true)
@@ -237,6 +245,33 @@ export default function Dashboard() {
             <span className="text-xs text-white/40">%</span>
           </div>
 
+          {/* Expiration Toggle */}
+          <button
+            onClick={() => setExpiringWithin48h(!expiringWithin48h)}
+            className={clsx(
+              "flex items-center gap-2 px-4 py-2 rounded-lg border transition-all",
+              expiringWithin48h
+                ? "bg-electric-orange/20 border-electric-orange/50 text-electric-orange"
+                : "bg-midnight-800 border-white/10 text-white/60 hover:border-white/20"
+            )}
+          >
+            <Clock className="w-4 h-4" />
+            <span className="text-xs font-medium">
+              {expiringWithin48h ? 'Expiring in 48h' : 'All Markets'}
+            </span>
+            <div className={clsx(
+              "w-8 h-4 rounded-full transition-all relative",
+              expiringWithin48h ? "bg-electric-orange/40" : "bg-white/10"
+            )}>
+              <div className={clsx(
+                "absolute top-0.5 w-3 h-3 rounded-full transition-all",
+                expiringWithin48h 
+                  ? "right-0.5 bg-electric-orange" 
+                  : "left-0.5 bg-white/40"
+              )} />
+            </div>
+          </button>
+
           <div className="text-xs text-white/40">
             Showing {filteredOpportunities.length} opportunities
           </div>
@@ -336,6 +371,11 @@ function OpportunityCard({ opportunity, index }: { opportunity: ArbitrageOpportu
     mlb: 'bg-red-500/20 text-red-400 border-red-500/30',
     nhl: 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30',
   }
+
+  // Get expiration time (prefer Kalshi's expected_expiration_time)
+  const expirationTime = opportunity.kalshi.expected_expiration_time || opportunity.polymarket.end_date
+  const expirationDate = expirationTime ? new Date(expirationTime) : null
+  const isExpiringSoon = expirationDate && (expirationDate.getTime() - Date.now()) < 48 * 60 * 60 * 1000
   
   return (
     <motion.div
@@ -365,6 +405,17 @@ function OpportunityCard({ opportunity, index }: { opportunity: ArbitrageOpportu
               {opportunity.team && (
                 <span className="px-2 py-0.5 rounded text-xs bg-electric-purple/20 text-electric-purple">
                   {opportunity.team}
+                </span>
+              )}
+              {expirationDate && (
+                <span className={clsx(
+                  "px-2 py-0.5 rounded text-xs flex items-center gap-1",
+                  isExpiringSoon 
+                    ? "bg-electric-orange/20 text-electric-orange border border-electric-orange/30" 
+                    : "bg-white/5 text-white/50"
+                )}>
+                  <Clock className="w-3 h-3" />
+                  {formatDistanceToNow(expirationDate, { addSuffix: true })}
                 </span>
               )}
             </div>

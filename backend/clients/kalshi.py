@@ -85,6 +85,7 @@ class KalshiMarket:
     open_interest: int
     status: str
     close_time: Optional[datetime]
+    expected_expiration_time: Optional[datetime]  # When market is expected to expire
     result: Optional[str]
     category: str
     
@@ -117,6 +118,7 @@ class KalshiMarket:
             "open_interest": self.open_interest,
             "status": self.status,
             "close_time": self.close_time.isoformat() if self.close_time else None,
+            "expected_expiration_time": self.expected_expiration_time.isoformat() if self.expected_expiration_time else None,
             "result": self.result,
             "category": self.category,
             "platform": "kalshi"
@@ -535,6 +537,16 @@ class KalshiClient:
             except:
                 pass
         
+        # Parse expected expiration time
+        expected_expiration_time = None
+        if data.get("expected_expiration_time"):
+            try:
+                expected_expiration_time = datetime.fromisoformat(
+                    data["expected_expiration_time"].replace("Z", "+00:00")
+                )
+            except:
+                pass
+        
         # Kalshi prices are in cents (0-100), convert to decimal (0-1)
         def cents_to_decimal(cents: Any) -> float:
             if cents is None:
@@ -572,6 +584,7 @@ class KalshiClient:
             open_interest=int(data.get("open_interest", 0) or 0),
             status=data.get("status", ""),
             close_time=close_time,
+            expected_expiration_time=expected_expiration_time,
             result=data.get("result"),
             category=data.get("category", "")
         )

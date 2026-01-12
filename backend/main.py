@@ -7,7 +7,7 @@ Polymarket and Kalshi, matches them, and identifies arbitrage opportunities.
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional
 
 from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
@@ -459,7 +459,8 @@ async def get_kalshi_events(
 @app.get("/api/sports/arbitrage")
 async def get_sports_arbitrage(
     min_difference: float = Query(1.0, ge=0, le=100),
-    league: Optional[str] = Query(None, pattern="^(nfl|nba|mlb|nhl)$")
+    league: Optional[str] = Query(None, pattern="^(nfl|nba|mlb|nhl)$"),
+    expiring_within_hours: Optional[int] = Query(None, ge=1, le=720, description="Filter to markets expiring within N hours")
 ):
     """
     Get sports arbitrage opportunities.
@@ -467,6 +468,7 @@ async def get_sports_arbitrage(
     Args:
         min_difference: Minimum price difference percentage
         league: Filter by league (nfl, nba, mlb, nhl)
+        expiring_within_hours: Only show markets expiring within N hours (e.g., 48 for next 2 days)
     """
     if not state.cached_sports_opportunities:
         return {
@@ -486,6 +488,37 @@ async def get_sports_arbitrage(
     # Filter by league if specified
     if league:
         opps = [o for o in opps if o.get("league", "").lower() == league.lower()]
+    
+    # Filter by expiration time if specified
+    if expiring_within_hours:
+        now = datetime.now(timezone.utc)
+        cutoff = now + timedelta(hours=expiring_within_hours)
+        
+        filtered_opps = []
+        for o in opps:
+            # Get expiration time from either platform (prefer Kalshi's expected_expiration_time)
+            kalshi_exp = o.get("kalshi", {}).get("expected_expiration_time")
+            poly_exp = o.get("polymarket", {}).get("end_date")
+            
+            # Use the earliest available expiration time
+            exp_time = None
+            if kalshi_exp:
+                try:
+                    exp_time = datetime.fromisoformat(kalshi_exp.replace("Z", "+00:00"))
+                except:
+                    pass
+            
+            if not exp_time and poly_exp:
+                try:
+                    exp_time = datetime.fromisoformat(poly_exp.replace("Z", "+00:00"))
+                except:
+                    pass
+            
+            # Include if expires within the window
+            if exp_time and now < exp_time <= cutoff:
+                filtered_opps.append(o)
+        
+        opps = filtered_opps
     
     return {
         "opportunities": opps,
@@ -578,14 +611,17 @@ async def fetch_and_analyze_sports():
                     "question": poly.question,
                     "yes_price": poly_yes,
                     "no_price": poly.no_price,
-                    "url": f"https://polymarket.com/event/{poly.slug}" if hasattr(poly, 'slug') else ""
+                    "url": f"https://polymarket.com/event/{poly.slug}" if hasattr(poly, 'slug') else "",
+                    "end_date": poly.end_date.isoformat() if poly.end_date else None
                 },
                 "kalshi": {
                     "id": kalshi.ticker,
                     "question": kalshi.question,
                     "yes_price": kalshi_yes,
                     "no_price": kalshi.no_price,
-                    "url": f"https://kalshi.com/markets/{kalshi.ticker}"
+                    "url": f"https://kalshi.com/markets/{kalshi.ticker}",
+                    "expected_expiration_time": kalshi.expected_expiration_time.isoformat() if kalshi.expected_expiration_time else None,
+                    "close_time": kalshi.close_time.isoformat() if kalshi.close_time else None
                 },
                 "league": match["poly_info"].league.value,
                 "market_type": match["poly_info"].market_type.value,
