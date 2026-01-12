@@ -444,6 +444,10 @@ class KalshiClient:
                 
                 for market in markets:
                     if market.ticker not in seen_tickers:
+                        # Set the series ticker if not already set
+                        if not market.series_ticker:
+                            market.series_ticker = series_ticker
+                        
                         # Tag the market type
                         if series_ticker in self.SINGLE_GAME_SERIES:
                             market.category = f"single_game_{series_ticker.replace('KX', '').replace('GAME', '').lower()}"
