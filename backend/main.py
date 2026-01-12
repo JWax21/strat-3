@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from config import get_settings
 from clients import PolymarketClient, KalshiClient
 from services import MarketMatcher, ArbitrageDetector, ArbitrageOpportunity, SportsMarketMatcher
+from services.normalizer import get_normalizer
 from utils.rate_limiter import RateLimiterManager
 
 # Configure logging
@@ -697,21 +698,31 @@ async def debug_markets():
 async def get_all_sports_markets():
     """
     Get all sports markets from both platforms for debugging/comparison.
-    Shows raw markets with normalized names.
+    Shows normalized names for easy matching comparison.
     """
+    normalizer = get_normalizer()
     poly_markets = state.cached_polymarket_markets
     kalshi_markets = state.cached_kalshi_markets
     
-    # Format Polymarket markets - include ALL sports markets
+    # Format Polymarket markets with normalized names
     poly_formatted = []
     for m in poly_markets:
         category = m.get("category", "")
         question = m.get("question", "")
         slug = m.get("slug", "")
         
+        # Use normalizer to extract teams and create normalized name
+        away_team, home_team, game_date, sport = normalizer.parse_polymarket_slug(slug)
+        normalized_name = normalizer.create_normalized_name(away_team, home_team) if away_team and home_team else question
+        
         poly_formatted.append({
             "id": m.get("id"),
             "name": question,
+            "normalized_name": normalized_name,
+            "away_team": away_team,
+            "home_team": home_team,
+            "game_date": game_date,
+            "sport": sport.value if sport else None,
             "slug": slug,
             "yes_price": m.get("yes_price", 0),
             "no_price": m.get("no_price", 0),
@@ -719,14 +730,25 @@ async def get_all_sports_markets():
             "end_date": m.get("end_date"),
         })
     
-    # Format Kalshi markets - include ALL sports markets
+    # Format Kalshi markets with normalized names
     kalshi_formatted = []
     for m in kalshi_markets:
         category = m.get("category", "")
+        ticker = m.get("ticker", m.get("id", ""))
+        question = m.get("question", m.get("title", ""))
+        
+        # Use normalizer to extract teams and create normalized name
+        away_team, home_team, game_date, sport = normalizer.parse_kalshi_ticker(ticker)
+        normalized_name = normalizer.create_normalized_name(away_team, home_team) if away_team and home_team else question
         
         kalshi_formatted.append({
-            "id": m.get("ticker", m.get("id")),
-            "name": m.get("question", m.get("title", "")),
+            "id": ticker,
+            "name": question,
+            "normalized_name": normalized_name,
+            "away_team": away_team,
+            "home_team": home_team,
+            "game_date": game_date,
+            "sport": sport.value if sport else None,
             "series": m.get("series_ticker", ""),
             "yes_price": m.get("yes_price", 0),
             "no_price": m.get("no_price", 0),
@@ -740,12 +762,43 @@ async def get_all_sports_markets():
     kalshi_single_game = [m for m in kalshi_formatted if "single_game" in m.get("category", "")]
     kalshi_futures = [m for m in kalshi_formatted if m.get("category", "") == "futures"]
     
+    # Find potential matches (same normalized name and date)
+    matches = []
+    for pm in poly_single_game:
+        if not pm.get("normalized_name") or pm["normalized_name"] == pm["name"]:
+            continue  # Skip if normalization failed
+        for km in kalshi_single_game:
+            if not km.get("normalized_name") or km["normalized_name"] == km["name"]:
+                continue
+            # Check if teams match (order-agnostic)
+            poly_teams = {pm.get("away_team"), pm.get("home_team")} - {None}
+            kalshi_teams = {km.get("away_team"), km.get("home_team")} - {None}
+            if poly_teams == kalshi_teams and len(poly_teams) == 2:
+                # Check date matches
+                if pm.get("game_date") == km.get("game_date"):
+                    matches.append({
+                        "normalized_name": pm["normalized_name"],
+                        "game_date": pm["game_date"],
+                        "polymarket": {
+                            "id": pm["id"],
+                            "yes_price": pm["yes_price"],
+                            "no_price": pm["no_price"],
+                        },
+                        "kalshi": {
+                            "id": km["id"],
+                            "yes_price": km["yes_price"],
+                            "no_price": km["no_price"],
+                        },
+                        "price_diff_yes": abs(pm["yes_price"] - km["yes_price"]) * 100,
+                        "price_diff_no": abs(pm["no_price"] - km["no_price"]) * 100,
+                    })
+    
     return {
         "polymarket": {
             "total": len(poly_formatted),
             "single_game": {
                 "count": len(poly_single_game),
-                "markets": poly_single_game[:100]  # Increase limit
+                "markets": poly_single_game[:100]
             },
             "futures": {
                 "count": len(poly_futures),
@@ -762,6 +815,10 @@ async def get_all_sports_markets():
                 "count": len(kalshi_futures),
                 "markets": kalshi_futures[:100]
             }
+        },
+        "matches": {
+            "count": len(matches),
+            "markets": matches[:50]
         },
         "last_updated": state.last_fetch.isoformat() if state.last_fetch else None
     }

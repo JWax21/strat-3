@@ -22,6 +22,15 @@ import { clsx } from 'clsx'
 
 type TabType = 'arbitrage' | 'all-markets'
 
+interface MarketMatch {
+  normalized_name: string
+  game_date: string | null
+  polymarket: { id: string; yes_price: number; no_price: number }
+  kalshi: { id: string; yes_price: number; no_price: number }
+  price_diff_yes: number
+  price_diff_no: number
+}
+
 interface AllMarketsData {
   polymarket: {
     total: number
@@ -33,12 +42,21 @@ interface AllMarketsData {
     single_game: { count: number; markets: MarketItem[] }
     futures: { count: number; markets: MarketItem[] }
   }
+  matches?: {
+    count: number
+    markets: MarketMatch[]
+  }
   last_updated: string | null
 }
 
 interface MarketItem {
   id: string
   name: string
+  normalized_name?: string
+  away_team?: string | null
+  home_team?: string | null
+  game_date?: string | null
+  sport?: string | null
   slug?: string
   series?: string
   yes_price: number
@@ -657,44 +675,44 @@ function AllMarketsTab({
   onRefresh: () => void
   refreshing: boolean
 }) {
-  const [marketType, setMarketType] = useState<'single_game' | 'futures'>('single_game')
+  const [marketType, setMarketType] = useState<'single_game' | 'futures' | 'matches'>('single_game')
   const [searchQuery, setSearchQuery] = useState('')
 
-  // Helper to normalize market name
-  const normalizeName = (name: string): string => {
-    // Extract team names from common patterns
-    // Pattern: "Team A at Team B Winner?" or "Will Team A beat Team B?"
-    const atMatch = name.match(/^(.+?)\s+at\s+(.+?)\s+(winner|win)/i)
-    if (atMatch) {
-      return `${atMatch[1].trim()} @ ${atMatch[2].trim()}`
+  // Use normalized_name from API if available, otherwise truncate original name
+  const getDisplayName = (market: MarketItem): string => {
+    if (market.normalized_name && market.normalized_name !== market.name) {
+      return market.normalized_name
     }
-    
-    // Pattern: "Team A vs. Team B" or "Team A vs Team B"
-    const vsMatch = name.match(/^(.+?)\s+vs\.?\s+(.+?)(?:\s|$)/i)
-    if (vsMatch) {
-      return `${vsMatch[1].trim()} vs ${vsMatch[2].trim()}`
-    }
-    
-    // Pattern from slug: "nba-uta-cle-2026-01-12" -> "UTA vs CLE"
-    const slugMatch = name.match(/^(?:nfl|nba|mlb|nhl|cbb|cwbb)-([a-z]{2,5})-([a-z]{2,5})-/i)
-    if (slugMatch) {
-      return `${slugMatch[1].toUpperCase()} vs ${slugMatch[2].toUpperCase()}`
-    }
-    
-    // Default: return truncated name
-    return name.length > 60 ? name.substring(0, 60) + '...' : name
+    // Fallback: truncate original name
+    return market.name.length > 60 ? market.name.substring(0, 60) + '...' : market.name
+  }
+  
+  // Get additional info (sport + date) for display
+  const getMarketMeta = (market: MarketItem): string => {
+    const parts: string[] = []
+    if (market.sport) parts.push(market.sport.toUpperCase())
+    if (market.game_date) parts.push(market.game_date)
+    return parts.join(' • ')
   }
 
   // Get markets based on selected type
-  const polyMarkets = data?.polymarket[marketType]?.markets || []
-  const kalshiMarkets = data?.kalshi[marketType]?.markets || []
+  const polyMarkets = marketType !== 'matches' ? (data?.polymarket[marketType as 'single_game' | 'futures']?.markets || []) : []
+  const kalshiMarkets = marketType !== 'matches' ? (data?.kalshi[marketType as 'single_game' | 'futures']?.markets || []) : []
+  const matches = data?.matches?.markets || []
 
   // Filter by search
   const filteredPoly = polyMarkets.filter(m => 
-    !searchQuery || m.name.toLowerCase().includes(searchQuery.toLowerCase())
+    !searchQuery || 
+    m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (m.normalized_name && m.normalized_name.toLowerCase().includes(searchQuery.toLowerCase()))
   )
   const filteredKalshi = kalshiMarkets.filter(m => 
-    !searchQuery || m.name.toLowerCase().includes(searchQuery.toLowerCase())
+    !searchQuery || 
+    m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (m.normalized_name && m.normalized_name.toLowerCase().includes(searchQuery.toLowerCase()))
+  )
+  const filteredMatches = matches.filter(m =>
+    !searchQuery || m.normalized_name.toLowerCase().includes(searchQuery.toLowerCase())
   )
 
   if (!data && !loading) {
@@ -771,6 +789,17 @@ function AllMarketsTab({
           >
             Futures / Awards
           </button>
+          <button
+            onClick={() => setMarketType('matches')}
+            className={clsx(
+              "px-3 py-1.5 rounded-md text-sm font-medium transition-all",
+              marketType === 'matches'
+                ? "bg-profit/20 text-profit"
+                : "text-white/50 hover:text-white/70"
+            )}
+          >
+            Matches ({data?.matches?.count ?? 0})
+          </button>
         </div>
 
         <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-midnight-800 border border-white/10">
@@ -785,49 +814,63 @@ function AllMarketsTab({
         </div>
       </div>
 
-      {/* Two-column market table */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Polymarket Column */}
+      {/* Matches View */}
+      {marketType === 'matches' && (
         <div className="card-glass rounded-xl overflow-hidden">
-          <div className="p-4 border-b border-white/10 bg-electric-cyan/5">
+          <div className="p-4 border-b border-white/10 bg-profit/5">
             <div className="flex items-center gap-2">
-              <span className="badge-polymarket px-2 py-0.5 rounded text-xs font-medium">Polymarket</span>
-              <span className="text-sm text-white/60">{filteredPoly.length} markets</span>
+              <GitCompare className="w-4 h-4 text-profit" />
+              <span className="text-sm text-white/90 font-medium">Matched Markets</span>
+              <span className="text-sm text-white/60">({filteredMatches.length} matches found)</span>
             </div>
           </div>
           <div className="max-h-[600px] overflow-y-auto">
-            {filteredPoly.length === 0 ? (
+            {filteredMatches.length === 0 ? (
               <div className="p-8 text-center text-white/40">
-                No {marketType === 'single_game' ? 'single game' : 'futures'} markets found
+                <GitCompare className="w-12 h-12 mx-auto mb-4 opacity-20" />
+                <p className="mb-2">No matching markets found between platforms</p>
+                <p className="text-xs">Markets must have the same teams and game date to match</p>
               </div>
             ) : (
               <table className="w-full">
                 <thead className="sticky top-0 bg-midnight-800">
                   <tr className="text-xs text-white/50 uppercase">
-                    <th className="text-left p-3">Market</th>
-                    <th className="text-right p-3 w-20">Yes</th>
-                    <th className="text-right p-3 w-20">No</th>
+                    <th className="text-left p-3">Game</th>
+                    <th className="text-center p-3">Date</th>
+                    <th className="text-right p-3">Poly Yes</th>
+                    <th className="text-right p-3">Kalshi Yes</th>
+                    <th className="text-right p-3">Diff</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
-                  {filteredPoly.map((market, i) => (
-                    <tr key={market.id || i} className="hover:bg-white/5 transition">
+                  {filteredMatches.map((match, i) => (
+                    <tr key={i} className="hover:bg-white/5 transition">
                       <td className="p-3">
                         <div className="text-sm text-white/90 font-medium">
-                          {normalizeName(market.name)}
-                        </div>
-                        <div className="text-xs text-white/40 mt-0.5 font-mono">
-                          {market.slug || market.id}
+                          {match.normalized_name}
                         </div>
                       </td>
-                      <td className="p-3 text-right">
-                        <span className="font-mono text-profit font-medium">
-                          {(market.yes_price * 100).toFixed(0)}¢
+                      <td className="p-3 text-center">
+                        <span className="text-xs text-white/60 font-mono">
+                          {match.game_date || '—'}
                         </span>
                       </td>
                       <td className="p-3 text-right">
-                        <span className="font-mono text-loss font-medium">
-                          {(market.no_price * 100).toFixed(0)}¢
+                        <span className="font-mono text-electric-cyan font-medium">
+                          {(match.polymarket.yes_price * 100).toFixed(0)}¢
+                        </span>
+                      </td>
+                      <td className="p-3 text-right">
+                        <span className="font-mono text-electric-purple font-medium">
+                          {(match.kalshi.yes_price * 100).toFixed(0)}¢
+                        </span>
+                      </td>
+                      <td className="p-3 text-right">
+                        <span className={clsx(
+                          "font-mono font-medium",
+                          match.price_diff_yes >= 3 ? "text-profit" : "text-white/50"
+                        )}>
+                          {match.price_diff_yes.toFixed(1)}%
                         </span>
                       </td>
                     </tr>
@@ -837,58 +880,114 @@ function AllMarketsTab({
             )}
           </div>
         </div>
+      )}
 
-        {/* Kalshi Column */}
-        <div className="card-glass rounded-xl overflow-hidden">
-          <div className="p-4 border-b border-white/10 bg-electric-purple/5">
-            <div className="flex items-center gap-2">
-              <span className="badge-kalshi px-2 py-0.5 rounded text-xs font-medium">Kalshi</span>
-              <span className="text-sm text-white/60">{filteredKalshi.length} markets</span>
+      {/* Two-column market table (for single_game and futures) */}
+      {marketType !== 'matches' && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Polymarket Column */}
+          <div className="card-glass rounded-xl overflow-hidden">
+            <div className="p-4 border-b border-white/10 bg-electric-cyan/5">
+              <div className="flex items-center gap-2">
+                <span className="badge-polymarket px-2 py-0.5 rounded text-xs font-medium">Polymarket</span>
+                <span className="text-sm text-white/60">{filteredPoly.length} markets</span>
+              </div>
+            </div>
+            <div className="max-h-[600px] overflow-y-auto">
+              {filteredPoly.length === 0 ? (
+                <div className="p-8 text-center text-white/40">
+                  No {marketType === 'single_game' ? 'single game' : 'futures'} markets found
+                </div>
+              ) : (
+                <table className="w-full">
+                  <thead className="sticky top-0 bg-midnight-800">
+                    <tr className="text-xs text-white/50 uppercase">
+                      <th className="text-left p-3">Market</th>
+                      <th className="text-right p-3 w-20">Yes</th>
+                      <th className="text-right p-3 w-20">No</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {filteredPoly.map((market, i) => (
+                      <tr key={market.id || i} className="hover:bg-white/5 transition">
+                        <td className="p-3">
+                          <div className="text-sm text-white/90 font-medium">
+                            {getDisplayName(market)}
+                          </div>
+                          <div className="text-xs text-white/40 mt-0.5">
+                            {getMarketMeta(market) || market.slug || market.id}
+                          </div>
+                        </td>
+                        <td className="p-3 text-right">
+                          <span className="font-mono text-profit font-medium">
+                            {(market.yes_price * 100).toFixed(0)}¢
+                          </span>
+                        </td>
+                        <td className="p-3 text-right">
+                          <span className="font-mono text-loss font-medium">
+                            {(market.no_price * 100).toFixed(0)}¢
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </div>
           </div>
-          <div className="max-h-[600px] overflow-y-auto">
-            {filteredKalshi.length === 0 ? (
-              <div className="p-8 text-center text-white/40">
-                No {marketType === 'single_game' ? 'single game' : 'futures'} markets found
+
+          {/* Kalshi Column */}
+          <div className="card-glass rounded-xl overflow-hidden">
+            <div className="p-4 border-b border-white/10 bg-electric-purple/5">
+              <div className="flex items-center gap-2">
+                <span className="badge-kalshi px-2 py-0.5 rounded text-xs font-medium">Kalshi</span>
+                <span className="text-sm text-white/60">{filteredKalshi.length} markets</span>
               </div>
-            ) : (
-              <table className="w-full">
-                <thead className="sticky top-0 bg-midnight-800">
-                  <tr className="text-xs text-white/50 uppercase">
-                    <th className="text-left p-3">Market</th>
-                    <th className="text-right p-3 w-20">Yes</th>
-                    <th className="text-right p-3 w-20">No</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
-                  {filteredKalshi.map((market, i) => (
-                    <tr key={market.id || i} className="hover:bg-white/5 transition">
-                      <td className="p-3">
-                        <div className="text-sm text-white/90 font-medium">
-                          {normalizeName(market.name)}
-                        </div>
-                        <div className="text-xs text-white/40 mt-0.5 font-mono">
-                          {market.series || market.id}
-                        </div>
-                      </td>
-                      <td className="p-3 text-right">
-                        <span className="font-mono text-profit font-medium">
-                          {(market.yes_price * 100).toFixed(0)}¢
-                        </span>
-                      </td>
-                      <td className="p-3 text-right">
-                        <span className="font-mono text-loss font-medium">
-                          {(market.no_price * 100).toFixed(0)}¢
-                        </span>
-                      </td>
+            </div>
+            <div className="max-h-[600px] overflow-y-auto">
+              {filteredKalshi.length === 0 ? (
+                <div className="p-8 text-center text-white/40">
+                  No {marketType === 'single_game' ? 'single game' : 'futures'} markets found
+                </div>
+              ) : (
+                <table className="w-full">
+                  <thead className="sticky top-0 bg-midnight-800">
+                    <tr className="text-xs text-white/50 uppercase">
+                      <th className="text-left p-3">Market</th>
+                      <th className="text-right p-3 w-20">Yes</th>
+                      <th className="text-right p-3 w-20">No</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {filteredKalshi.map((market, i) => (
+                      <tr key={market.id || i} className="hover:bg-white/5 transition">
+                        <td className="p-3">
+                          <div className="text-sm text-white/90 font-medium">
+                            {getDisplayName(market)}
+                          </div>
+                          <div className="text-xs text-white/40 mt-0.5">
+                            {getMarketMeta(market) || market.series || market.id}
+                          </div>
+                        </td>
+                        <td className="p-3 text-right">
+                          <span className="font-mono text-profit font-medium">
+                            {(market.yes_price * 100).toFixed(0)}¢
+                          </span>
+                        </td>
+                        <td className="p-3 text-right">
+                          <span className="font-mono text-loss font-medium">
+                            {(market.no_price * 100).toFixed(0)}¢
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Last updated */}
       {data?.last_updated && (

@@ -13,6 +13,7 @@ from enum import Enum
 
 from clients.polymarket import PolymarketMarket
 from clients.kalshi import KalshiMarket
+from services.normalizer import get_normalizer, Sport
 
 logger = logging.getLogger(__name__)
 

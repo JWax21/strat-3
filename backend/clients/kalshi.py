@@ -366,42 +366,86 @@ class KalshiClient:
         
         return markets
     
-    # Sports series tickers - SINGLE GAME markets (highest priority for arbitrage)
+    # =========================================================================
+    # SINGLE GAME MARKETS - Highest priority for arbitrage
+    # =========================================================================
     SINGLE_GAME_SERIES = [
+        # US Major Leagues
         "KXNBAGAME",       # NBA single games
         "KXNFLGAME",       # NFL single games
         "KXNHLGAME",       # NHL single games
         "KXMLBGAME",       # MLB single games
-        "KXNCAABGAME",     # College Basketball single games
-        "KXNCAAFGAME",     # College Football single games
         "KXWNBAGAME",      # WNBA single games
+        
+        # College Sports
+        "KXNCAABGAME",     # NCAA Men's Basketball (CBB)
+        "KXNCAAMBGAME",    # NCAA Men's Basketball (alternate)
+        "KXNCAAWBGAME",    # NCAA Women's Basketball
+        "KXNCAAFGAME",     # NCAA Football
+        "KXNCAAFBGAME",    # NCAA Football (alternate)
+        "KXNCAAFCSGAME",   # NCAA Football Championship Series
+        
+        # International Basketball
+        "KXEUROLEAGUEGAME", # EuroLeague Basketball
+        "KXNBLGAME",       # NBL (Australian Basketball)
+        
+        # MMA/UFC
+        "KXUFCFIGHT",      # UFC Fights
+        
+        # Tennis
+        "KXTENNISMATCH",   # Tennis matches
+        "KXATPTOUR",       # ATP Tour matches
+        "KXWTATOUR",       # WTA Tour matches
+        
+        # Golf
+        "KXPGATOUR",       # PGA Tour
+        "KXLPGATOUR",      # LPGA Tour
+        "KXGOLFTOURNAMENT", # Golf tournaments
+        
+        # Motorsport
+        "KXF1RACE",        # Formula 1 races
+        "KXNASCARRACE",    # NASCAR races
+        "KXINDYCARRACE",   # IndyCar races
+        
+        # Cricket
+        "KXCRICKETTESTMATCH",  # Cricket Test matches
+        "KXCRICKETT20IMATCH",  # Cricket T20 International
+        
+        # Chess
+        "KXCHESSMATCH",    # Chess matches
+        
+        # Esports
+        "KXDOTA2GAME",     # Dota 2 games
     ]
     
-    # Sports series tickers for championship/award markets (futures)
+    # =========================================================================
+    # FUTURES/AWARDS MARKETS - Championship and season-long markets
+    # =========================================================================
     SPORTS_FUTURES_SERIES = [
-        # Major Championships
+        # NFL Championships & Awards
         "KXSB",            # Super Bowl
-        "KXNBA",           # NBA Championship
-        "KXMLB",           # MLB World Series
-        "KXNHL",           # NHL Stanley Cup (if exists)
-        # NFL Division/Conference
         "KXAFC",           # AFC Championship
         "KXNFC",           # NFC Championship
-        # NFL Awards
         "KXNFLSBMVP",      # Super Bowl MVP
         "KXNFLDPOY",       # Defensive Player of Year
         "KXNFLOROTY",      # Offensive Rookie of Year
         "KXNFLCPOY",       # Comeback Player of Year
         "KXNFLCOACH",      # Coach of the Year
         "KXNFLMVP",        # NFL MVP
-        # NBA Awards
+        
+        # NBA Championships & Awards
+        "KXNBA",           # NBA Championship
         "KXNBAROY",        # NBA Rookie of the Year
         "KXNBAMVP",        # NBA MVP
-        # NHL
+        
+        # NHL Championships & Awards
+        "KXNHL",           # NHL Stanley Cup
         "KXNHLEAST",       # Eastern Conference
         "KXNHLWEST",       # Western Conference
         "KXNHLMVP",        # Hart Trophy
-        # MLB
+        
+        # MLB Championships & Awards
+        "KXMLB",           # MLB World Series
         "KXMLBALEAST",     # AL East Winner
         "KXMLBNLEAST",     # NL East Winner
         "KXMLBALROTY",     # AL Rookie of Year
