@@ -331,7 +331,9 @@ class KalshiClient:
         series_ticker: str = None,
         status: str = None,
         limit: int = 100,
-        cursor: str = None
+        cursor: str = None,
+        min_close_ts: int = None,
+        max_close_ts: int = None
     ) -> List[KalshiMarket]:
         """
         Fetch markets, optionally filtered.
@@ -342,6 +344,8 @@ class KalshiClient:
             status: Filter by status ("open", "closed", "settled")
             limit: Maximum results
             cursor: Pagination cursor
+            min_close_ts: Minimum close timestamp (Unix seconds) - games closing after this time
+            max_close_ts: Maximum close timestamp (Unix seconds) - games closing before this time
             
         Returns:
             List of market objects
@@ -355,6 +359,10 @@ class KalshiClient:
             params["status"] = status
         if cursor:
             params["cursor"] = cursor
+        if min_close_ts:
+            params["min_close_ts"] = min_close_ts
+        if max_close_ts:
+            params["max_close_ts"] = max_close_ts
         
         data = await self._request("/markets", params)
         
@@ -452,7 +460,11 @@ class KalshiClient:
         "KXMLBNLROTY",     # NL Rookie of Year
     ]
     
-    async def get_sports_markets(self, include_single_games: bool = True) -> List[KalshiMarket]:
+    async def get_sports_markets(
+        self, 
+        include_single_games: bool = True,
+        max_expiration_hours: int = 48
+    ) -> List[KalshiMarket]:
         """
         Fetch sports markets from Kalshi including:
         1. Single-game markets (NBA, NFL, NHL, MLB, etc.)
@@ -460,14 +472,23 @@ class KalshiClient:
         
         Args:
             include_single_games: Whether to include single-game markets
+            max_expiration_hours: For single games, only include markets expiring within this many hours
+                                  (default 48 = today and tomorrow). Uses expected_expiration_time, 
+                                  not close_time (which is when trading closes, usually 2 weeks later).
             
         Returns:
             List of sports markets
         """
+        from datetime import datetime, timezone, timedelta
+        
         all_markets = []
         seen_tickers = set()
         single_game_count = 0
         futures_count = 0
+        
+        # Calculate cutoff for filtering single-game markets by expiration
+        now = datetime.now(timezone.utc)
+        max_expiration = now + timedelta(hours=max_expiration_hours)
         
         # Combine series lists
         all_series = []
@@ -475,15 +496,19 @@ class KalshiClient:
             all_series.extend(self.SINGLE_GAME_SERIES)
         all_series.extend(self.SPORTS_FUTURES_SERIES)
         
-        logger.info(f"Fetching sports markets from {len(all_series)} Kalshi series...")
+        logger.info(f"Fetching sports markets from {len(all_series)} Kalshi series (games within {max_expiration_hours}h)...")
         
         for series_ticker in all_series:
             try:
+                is_single_game = series_ticker in self.SINGLE_GAME_SERIES
+                
                 # Fetch markets for this series
+                # Note: We fetch all open markets, then filter client-side by expected_expiration_time
+                # because the API's max_close_ts filters by trading close, not game time
                 markets = await self.get_markets(
                     series_ticker=series_ticker,
                     status="open",
-                    limit=100
+                    limit=200  # Fetch more to ensure we get recent games
                 )
                 
                 for market in markets:
@@ -492,13 +517,28 @@ class KalshiClient:
                         if not market.series_ticker:
                             market.series_ticker = series_ticker
                         
-                        # Tag the market type
-                        if series_ticker in self.SINGLE_GAME_SERIES:
+                        # Tag the market type and apply date filtering
+                        if is_single_game:
+                            # Filter single-game markets by expected_expiration_time
+                            if market.expected_expiration_time:
+                                # Ensure timezone-aware comparison
+                                exp_time = market.expected_expiration_time
+                                if exp_time.tzinfo is None:
+                                    exp_time = exp_time.replace(tzinfo=timezone.utc)
+                                
+                                # Skip games that are past the cutoff
+                                if exp_time > max_expiration:
+                                    continue
+                                # Skip games that have already expired
+                                if exp_time < now:
+                                    continue
+                            
                             market.category = f"single_game_{series_ticker.replace('KX', '').replace('GAME', '').lower()}"
                             single_game_count += 1
                         else:
                             market.category = "futures"
                             futures_count += 1
+                        
                         all_markets.append(market)
                         seen_tickers.add(market.ticker)
                 
