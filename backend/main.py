@@ -693,6 +693,80 @@ async def debug_markets():
     }
 
 
+@app.get("/api/sports/all-markets")
+async def get_all_sports_markets():
+    """
+    Get all sports markets from both platforms for debugging/comparison.
+    Shows raw markets with normalized names.
+    """
+    poly_markets = state.cached_polymarket_markets
+    kalshi_markets = state.cached_kalshi_markets
+    
+    # Format Polymarket markets - include ALL sports markets
+    poly_formatted = []
+    for m in poly_markets:
+        category = m.get("category", "")
+        question = m.get("question", "")
+        slug = m.get("slug", "")
+        
+        poly_formatted.append({
+            "id": m.get("id"),
+            "name": question,
+            "slug": slug,
+            "yes_price": m.get("yes_price", 0),
+            "no_price": m.get("no_price", 0),
+            "category": category,
+            "end_date": m.get("end_date"),
+        })
+    
+    # Format Kalshi markets - include ALL sports markets
+    kalshi_formatted = []
+    for m in kalshi_markets:
+        category = m.get("category", "")
+        
+        kalshi_formatted.append({
+            "id": m.get("ticker", m.get("id")),
+            "name": m.get("question", m.get("title", "")),
+            "series": m.get("series_ticker", ""),
+            "yes_price": m.get("yes_price", 0),
+            "no_price": m.get("no_price", 0),
+            "category": category,
+            "expiration": m.get("expected_expiration_time"),
+        })
+    
+    # Group by category for easier viewing
+    poly_single_game = [m for m in poly_formatted if "single_game" in m.get("category", "")]
+    poly_futures = [m for m in poly_formatted if "single_game" not in m.get("category", "") and m.get("category", "")]
+    kalshi_single_game = [m for m in kalshi_formatted if "single_game" in m.get("category", "")]
+    kalshi_futures = [m for m in kalshi_formatted if m.get("category", "") == "futures"]
+    
+    return {
+        "polymarket": {
+            "total": len(poly_formatted),
+            "single_game": {
+                "count": len(poly_single_game),
+                "markets": poly_single_game[:100]  # Increase limit
+            },
+            "futures": {
+                "count": len(poly_futures),
+                "markets": poly_futures[:100]
+            }
+        },
+        "kalshi": {
+            "total": len(kalshi_formatted),
+            "single_game": {
+                "count": len(kalshi_single_game),
+                "markets": kalshi_single_game[:100]
+            },
+            "futures": {
+                "count": len(kalshi_futures),
+                "markets": kalshi_futures[:100]
+            }
+        },
+        "last_updated": state.last_fetch.isoformat() if state.last_fetch else None
+    }
+
+
 if __name__ == "__main__":
     import uvicorn
     settings = get_settings()

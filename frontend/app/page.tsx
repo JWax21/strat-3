@@ -13,10 +13,40 @@ import {
   BarChart3,
   Clock,
   Filter,
-  Search
+  Search,
+  List,
+  GitCompare
 } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import { clsx } from 'clsx'
+
+type TabType = 'arbitrage' | 'all-markets'
+
+interface AllMarketsData {
+  polymarket: {
+    total: number
+    single_game: { count: number; markets: MarketItem[] }
+    futures: { count: number; markets: MarketItem[] }
+  }
+  kalshi: {
+    total: number
+    single_game: { count: number; markets: MarketItem[] }
+    futures: { count: number; markets: MarketItem[] }
+  }
+  last_updated: string | null
+}
+
+interface MarketItem {
+  id: string
+  name: string
+  slug?: string
+  series?: string
+  yes_price: number
+  no_price: number
+  category: string
+  end_date?: string
+  expiration?: string
+}
 
 interface ArbitrageOpportunity {
   polymarket: {
@@ -61,7 +91,9 @@ interface ApiResponse {
 }
 
 export default function Dashboard() {
+  const [activeTab, setActiveTab] = useState<TabType>('arbitrage')
   const [data, setData] = useState<ApiResponse | null>(null)
+  const [allMarketsData, setAllMarketsData] = useState<AllMarketsData | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -94,16 +126,30 @@ export default function Dashboard() {
     } finally {
       setLoading(false)
     }
-  }, [minDifference, expiringWithin48h])
+  }, [API_BASE, isLocalhost, minDifference, expiringWithin48h])
+
+  const fetchAllMarkets = useCallback(async () => {
+    if (isLocalhost && typeof window !== 'undefined' && !window.location.hostname.includes('localhost')) {
+      return
+    }
+    try {
+      const response = await fetch(`${API_BASE}/api/sports/all-markets`)
+      if (!response.ok) throw new Error('Failed to fetch all markets')
+      const result = await response.json()
+      setAllMarketsData(result)
+    } catch (err) {
+      console.error('Failed to fetch all markets:', err)
+    }
+  }, [API_BASE, isLocalhost])
 
   const triggerRefresh = async () => {
     setRefreshing(true)
     try {
-      const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
-      await fetch(`${apiBase}/api/sports/refresh`, { method: 'POST' })
+      await fetch(`${API_BASE}/api/sports/refresh`, { method: 'POST' })
       // Wait for the backend to process (sports scan takes longer)
       await new Promise(resolve => setTimeout(resolve, 8000))
       await fetchData()
+      await fetchAllMarkets()
     } catch (err) {
       setError('Failed to refresh data')
     } finally {
@@ -113,9 +159,13 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetchData()
-    const interval = setInterval(fetchData, 30000) // Refresh every 30s
+    fetchAllMarkets()
+    const interval = setInterval(() => {
+      fetchData()
+      fetchAllMarkets()
+    }, 30000) // Refresh every 30s
     return () => clearInterval(interval)
-  }, [fetchData])
+  }, [fetchData, fetchAllMarkets])
 
   const filteredOpportunities = data?.opportunities.filter(opp => {
     if (!searchQuery) return true
@@ -156,6 +206,34 @@ export default function Dashboard() {
             </div>
 
             <div className="flex items-center gap-4">
+              {/* Tabs */}
+              <div className="flex items-center rounded-lg bg-midnight-800 border border-white/10 p-1">
+                <button
+                  onClick={() => setActiveTab('arbitrage')}
+                  className={clsx(
+                    "flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all",
+                    activeTab === 'arbitrage'
+                      ? "bg-electric-cyan/20 text-electric-cyan"
+                      : "text-white/50 hover:text-white/70"
+                  )}
+                >
+                  <GitCompare className="w-4 h-4" />
+                  Arbitrage
+                </button>
+                <button
+                  onClick={() => setActiveTab('all-markets')}
+                  className={clsx(
+                    "flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all",
+                    activeTab === 'all-markets'
+                      ? "bg-electric-purple/20 text-electric-purple"
+                      : "text-white/50 hover:text-white/70"
+                  )}
+                >
+                  <List className="w-4 h-4" />
+                  All Markets
+                </button>
+              </div>
+
               {/* Status indicator */}
               <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10">
                 <div className={clsx(
@@ -189,136 +267,142 @@ export default function Dashboard() {
       </header>
 
       <main className="max-w-7xl mx-auto px-6 py-8 relative z-10">
-        {/* Stats Overview */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-          <StatCard
-            icon={<BarChart3 className="w-5 h-5" />}
-            label="Opportunities"
-            value={data?.summary.total ?? 0}
-            color="cyan"
-          />
-          <StatCard
-            icon={<TrendingUp className="w-5 h-5" />}
-            label="NFL Markets"
-            value={data?.summary.by_league?.nfl ?? 0}
-            color="profit"
-          />
-          <StatCard
-            icon={<Activity className="w-5 h-5" />}
-            label="Avg Difference"
-            value={`${(data?.summary.avg_difference ?? 0).toFixed(1)}%`}
-            color="purple"
-          />
-          <StatCard
-            icon={<Zap className="w-5 h-5" />}
-            label="NBA Markets"
-            value={data?.summary.by_league?.nba ?? 0}
-            color="orange"
-          />
-        </div>
-
-        {/* Filters */}
-        <div className="flex flex-wrap items-center gap-4 mb-6">
-          <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-midnight-800 border border-white/10">
-            <Search className="w-4 h-4 text-white/40" />
-            <input
-              type="text"
-              placeholder="Search markets..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="bg-transparent text-sm text-white placeholder-white/30 outline-none w-48"
-            />
-          </div>
-
-          <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-midnight-800 border border-white/10">
-            <Filter className="w-4 h-4 text-white/40" />
-            <span className="text-xs text-white/40">Min Diff:</span>
-            <input
-              type="number"
-              min={0}
-              max={50}
-              step={0.5}
-              value={minDifference}
-              onChange={(e) => setMinDifference(parseFloat(e.target.value) || 0)}
-              className="bg-transparent text-sm text-white outline-none w-16 text-center"
-            />
-            <span className="text-xs text-white/40">%</span>
-          </div>
-
-          {/* Expiration Toggle */}
-          <button
-            onClick={() => setExpiringWithin48h(!expiringWithin48h)}
-            className={clsx(
-              "flex items-center gap-2 px-4 py-2 rounded-lg border transition-all",
-              expiringWithin48h
-                ? "bg-electric-orange/20 border-electric-orange/50 text-electric-orange"
-                : "bg-midnight-800 border-white/10 text-white/60 hover:border-white/20"
-            )}
-          >
-            <Clock className="w-4 h-4" />
-            <span className="text-xs font-medium">
-              {expiringWithin48h ? 'Expiring in 48h' : 'All Markets'}
-            </span>
-            <div className={clsx(
-              "w-8 h-4 rounded-full transition-all relative",
-              expiringWithin48h ? "bg-electric-orange/40" : "bg-white/10"
-            )}>
-              <div className={clsx(
-                "absolute top-0.5 w-3 h-3 rounded-full transition-all",
-                expiringWithin48h 
-                  ? "right-0.5 bg-electric-orange" 
-                  : "left-0.5 bg-white/40"
-              )} />
+        {activeTab === 'arbitrage' ? (
+          <>
+            {/* Stats Overview */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+              <StatCard
+                icon={<BarChart3 className="w-5 h-5" />}
+                label="Opportunities"
+                value={data?.summary.total ?? 0}
+                color="cyan"
+              />
+              <StatCard
+                icon={<TrendingUp className="w-5 h-5" />}
+                label="NFL Markets"
+                value={data?.summary.by_league?.nfl ?? 0}
+                color="profit"
+              />
+              <StatCard
+                icon={<Activity className="w-5 h-5" />}
+                label="Avg Difference"
+                value={`${(data?.summary.avg_difference ?? 0).toFixed(1)}%`}
+                color="purple"
+              />
+              <StatCard
+                icon={<Zap className="w-5 h-5" />}
+                label="NBA Markets"
+                value={data?.summary.by_league?.nba ?? 0}
+                color="orange"
+              />
             </div>
-          </button>
 
-          <div className="text-xs text-white/40">
-            Showing {filteredOpportunities.length} opportunities
-          </div>
-        </div>
+            {/* Filters */}
+            <div className="flex flex-wrap items-center gap-4 mb-6">
+              <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-midnight-800 border border-white/10">
+                <Search className="w-4 h-4 text-white/40" />
+                <input
+                  type="text"
+                  placeholder="Search markets..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="bg-transparent text-sm text-white placeholder-white/30 outline-none w-48"
+                />
+              </div>
 
-        {/* Loading state */}
-        {loading && (
-          <div className="grid grid-cols-1 gap-4">
-            {[...Array(5)].map((_, i) => (
-              <div key={i} className="h-32 rounded-xl skeleton" />
-            ))}
-          </div>
+              <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-midnight-800 border border-white/10">
+                <Filter className="w-4 h-4 text-white/40" />
+                <span className="text-xs text-white/40">Min Diff:</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={50}
+                  step={0.5}
+                  value={minDifference}
+                  onChange={(e) => setMinDifference(parseFloat(e.target.value) || 0)}
+                  className="bg-transparent text-sm text-white outline-none w-16 text-center"
+                />
+                <span className="text-xs text-white/40">%</span>
+              </div>
+
+              {/* Expiration Toggle */}
+              <button
+                onClick={() => setExpiringWithin48h(!expiringWithin48h)}
+                className={clsx(
+                  "flex items-center gap-2 px-4 py-2 rounded-lg border transition-all",
+                  expiringWithin48h
+                    ? "bg-electric-orange/20 border-electric-orange/50 text-electric-orange"
+                    : "bg-midnight-800 border-white/10 text-white/60 hover:border-white/20"
+                )}
+              >
+                <Clock className="w-4 h-4" />
+                <span className="text-xs font-medium">
+                  {expiringWithin48h ? 'Expiring in 48h' : 'All Expirations'}
+                </span>
+                <div className={clsx(
+                  "w-8 h-4 rounded-full transition-all relative",
+                  expiringWithin48h ? "bg-electric-orange/40" : "bg-white/10"
+                )}>
+                  <div className={clsx(
+                    "absolute top-0.5 w-3 h-3 rounded-full transition-all",
+                    expiringWithin48h 
+                      ? "right-0.5 bg-electric-orange" 
+                      : "left-0.5 bg-white/40"
+                  )} />
+                </div>
+              </button>
+
+              <div className="text-xs text-white/40">
+                Showing {filteredOpportunities.length} opportunities
+              </div>
+            </div>
+
+            {/* Loading state */}
+            {loading && (
+              <div className="grid grid-cols-1 gap-4">
+                {[...Array(5)].map((_, i) => (
+                  <div key={i} className="h-32 rounded-xl skeleton" />
+                ))}
+              </div>
+            )}
+
+            {/* Error state */}
+            {error && (
+              <div className="flex items-center justify-center p-12 rounded-xl bg-loss/10 border border-loss/30">
+                <AlertTriangle className="w-6 h-6 text-loss mr-3" />
+                <span className="text-loss">{error}</span>
+              </div>
+            )}
+
+            {/* Empty state */}
+            {!loading && !error && filteredOpportunities.length === 0 && (
+              <div className="flex flex-col items-center justify-center p-16 rounded-xl card-glass">
+                <Activity className="w-12 h-12 text-white/20 mb-4" />
+                <h3 className="text-lg font-medium text-white/60 mb-2">No opportunities found</h3>
+                <p className="text-sm text-white/40 mb-4">
+                  Click refresh to scan for arbitrage opportunities
+                </p>
+                <button
+                  onClick={triggerRefresh}
+                  className="px-4 py-2 rounded-lg bg-electric-cyan/10 text-electric-cyan border border-electric-cyan/30 text-sm"
+                >
+                  Start Scanning
+                </button>
+              </div>
+            )}
+
+            {/* Opportunities list */}
+            <AnimatePresence>
+              <div className="grid grid-cols-1 gap-4">
+                {filteredOpportunities.map((opp, index) => (
+                  <OpportunityCard key={index} opportunity={opp} index={index} />
+                ))}
+              </div>
+            </AnimatePresence>
+          </>
+        ) : (
+          <AllMarketsTab data={allMarketsData} loading={loading} onRefresh={triggerRefresh} refreshing={refreshing} />
         )}
-
-        {/* Error state */}
-        {error && (
-          <div className="flex items-center justify-center p-12 rounded-xl bg-loss/10 border border-loss/30">
-            <AlertTriangle className="w-6 h-6 text-loss mr-3" />
-            <span className="text-loss">{error}</span>
-          </div>
-        )}
-
-        {/* Empty state */}
-        {!loading && !error && filteredOpportunities.length === 0 && (
-          <div className="flex flex-col items-center justify-center p-16 rounded-xl card-glass">
-            <Activity className="w-12 h-12 text-white/20 mb-4" />
-            <h3 className="text-lg font-medium text-white/60 mb-2">No opportunities found</h3>
-            <p className="text-sm text-white/40 mb-4">
-              Click refresh to scan for arbitrage opportunities
-            </p>
-            <button
-              onClick={triggerRefresh}
-              className="px-4 py-2 rounded-lg bg-electric-cyan/10 text-electric-cyan border border-electric-cyan/30 text-sm"
-            >
-              Start Scanning
-            </button>
-          </div>
-        )}
-
-        {/* Opportunities list */}
-        <AnimatePresence>
-          <div className="grid grid-cols-1 gap-4">
-            {filteredOpportunities.map((opp, index) => (
-              <OpportunityCard key={index} opportunity={opp} index={index} />
-            ))}
-          </div>
-        </AnimatePresence>
       </main>
     </div>
   )
@@ -558,6 +642,260 @@ function PriceCard({
           </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+function AllMarketsTab({ 
+  data, 
+  loading, 
+  onRefresh,
+  refreshing
+}: { 
+  data: AllMarketsData | null
+  loading: boolean
+  onRefresh: () => void
+  refreshing: boolean
+}) {
+  const [marketType, setMarketType] = useState<'single_game' | 'futures'>('single_game')
+  const [searchQuery, setSearchQuery] = useState('')
+
+  // Helper to normalize market name
+  const normalizeName = (name: string): string => {
+    // Extract team names from common patterns
+    // Pattern: "Team A at Team B Winner?" or "Will Team A beat Team B?"
+    const atMatch = name.match(/^(.+?)\s+at\s+(.+?)\s+(winner|win)/i)
+    if (atMatch) {
+      return `${atMatch[1].trim()} @ ${atMatch[2].trim()}`
+    }
+    
+    // Pattern: "Team A vs. Team B" or "Team A vs Team B"
+    const vsMatch = name.match(/^(.+?)\s+vs\.?\s+(.+?)(?:\s|$)/i)
+    if (vsMatch) {
+      return `${vsMatch[1].trim()} vs ${vsMatch[2].trim()}`
+    }
+    
+    // Pattern from slug: "nba-uta-cle-2026-01-12" -> "UTA vs CLE"
+    const slugMatch = name.match(/^(?:nfl|nba|mlb|nhl|cbb|cwbb)-([a-z]{2,5})-([a-z]{2,5})-/i)
+    if (slugMatch) {
+      return `${slugMatch[1].toUpperCase()} vs ${slugMatch[2].toUpperCase()}`
+    }
+    
+    // Default: return truncated name
+    return name.length > 60 ? name.substring(0, 60) + '...' : name
+  }
+
+  // Get markets based on selected type
+  const polyMarkets = data?.polymarket[marketType]?.markets || []
+  const kalshiMarkets = data?.kalshi[marketType]?.markets || []
+
+  // Filter by search
+  const filteredPoly = polyMarkets.filter(m => 
+    !searchQuery || m.name.toLowerCase().includes(searchQuery.toLowerCase())
+  )
+  const filteredKalshi = kalshiMarkets.filter(m => 
+    !searchQuery || m.name.toLowerCase().includes(searchQuery.toLowerCase())
+  )
+
+  if (!data && !loading) {
+    return (
+      <div className="flex flex-col items-center justify-center p-16 rounded-xl card-glass">
+        <List className="w-12 h-12 text-white/20 mb-4" />
+        <h3 className="text-lg font-medium text-white/60 mb-2">No market data</h3>
+        <p className="text-sm text-white/40 mb-4">
+          Click refresh to fetch markets from both platforms
+        </p>
+        <button
+          onClick={onRefresh}
+          disabled={refreshing}
+          className="px-4 py-2 rounded-lg bg-electric-cyan/10 text-electric-cyan border border-electric-cyan/30 text-sm"
+        >
+          {refreshing ? 'Scanning...' : 'Fetch Markets'}
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      {/* Stats Overview */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+        <StatCard
+          icon={<BarChart3 className="w-5 h-5" />}
+          label="Polymarket Total"
+          value={data?.polymarket.total ?? 0}
+          color="cyan"
+        />
+        <StatCard
+          icon={<TrendingUp className="w-5 h-5" />}
+          label="Poly Single Games"
+          value={data?.polymarket.single_game?.count ?? 0}
+          color="profit"
+        />
+        <StatCard
+          icon={<Activity className="w-5 h-5" />}
+          label="Kalshi Total"
+          value={data?.kalshi.total ?? 0}
+          color="purple"
+        />
+        <StatCard
+          icon={<Zap className="w-5 h-5" />}
+          label="Kalshi Single Games"
+          value={data?.kalshi.single_game?.count ?? 0}
+          color="orange"
+        />
+      </div>
+
+      {/* Filters */}
+      <div className="flex flex-wrap items-center gap-4 mb-6">
+        <div className="flex items-center rounded-lg bg-midnight-800 border border-white/10 p-1">
+          <button
+            onClick={() => setMarketType('single_game')}
+            className={clsx(
+              "px-3 py-1.5 rounded-md text-sm font-medium transition-all",
+              marketType === 'single_game'
+                ? "bg-electric-orange/20 text-electric-orange"
+                : "text-white/50 hover:text-white/70"
+            )}
+          >
+            Single Games
+          </button>
+          <button
+            onClick={() => setMarketType('futures')}
+            className={clsx(
+              "px-3 py-1.5 rounded-md text-sm font-medium transition-all",
+              marketType === 'futures'
+                ? "bg-electric-purple/20 text-electric-purple"
+                : "text-white/50 hover:text-white/70"
+            )}
+          >
+            Futures / Awards
+          </button>
+        </div>
+
+        <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-midnight-800 border border-white/10">
+          <Search className="w-4 h-4 text-white/40" />
+          <input
+            type="text"
+            placeholder="Search markets..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="bg-transparent text-sm text-white placeholder-white/30 outline-none w-48"
+          />
+        </div>
+      </div>
+
+      {/* Two-column market table */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Polymarket Column */}
+        <div className="card-glass rounded-xl overflow-hidden">
+          <div className="p-4 border-b border-white/10 bg-electric-cyan/5">
+            <div className="flex items-center gap-2">
+              <span className="badge-polymarket px-2 py-0.5 rounded text-xs font-medium">Polymarket</span>
+              <span className="text-sm text-white/60">{filteredPoly.length} markets</span>
+            </div>
+          </div>
+          <div className="max-h-[600px] overflow-y-auto">
+            {filteredPoly.length === 0 ? (
+              <div className="p-8 text-center text-white/40">
+                No {marketType === 'single_game' ? 'single game' : 'futures'} markets found
+              </div>
+            ) : (
+              <table className="w-full">
+                <thead className="sticky top-0 bg-midnight-800">
+                  <tr className="text-xs text-white/50 uppercase">
+                    <th className="text-left p-3">Market</th>
+                    <th className="text-right p-3 w-20">Yes</th>
+                    <th className="text-right p-3 w-20">No</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {filteredPoly.map((market, i) => (
+                    <tr key={market.id || i} className="hover:bg-white/5 transition">
+                      <td className="p-3">
+                        <div className="text-sm text-white/90 font-medium">
+                          {normalizeName(market.name)}
+                        </div>
+                        <div className="text-xs text-white/40 mt-0.5 font-mono">
+                          {market.slug || market.id}
+                        </div>
+                      </td>
+                      <td className="p-3 text-right">
+                        <span className="font-mono text-profit font-medium">
+                          {(market.yes_price * 100).toFixed(0)}¢
+                        </span>
+                      </td>
+                      <td className="p-3 text-right">
+                        <span className="font-mono text-loss font-medium">
+                          {(market.no_price * 100).toFixed(0)}¢
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+
+        {/* Kalshi Column */}
+        <div className="card-glass rounded-xl overflow-hidden">
+          <div className="p-4 border-b border-white/10 bg-electric-purple/5">
+            <div className="flex items-center gap-2">
+              <span className="badge-kalshi px-2 py-0.5 rounded text-xs font-medium">Kalshi</span>
+              <span className="text-sm text-white/60">{filteredKalshi.length} markets</span>
+            </div>
+          </div>
+          <div className="max-h-[600px] overflow-y-auto">
+            {filteredKalshi.length === 0 ? (
+              <div className="p-8 text-center text-white/40">
+                No {marketType === 'single_game' ? 'single game' : 'futures'} markets found
+              </div>
+            ) : (
+              <table className="w-full">
+                <thead className="sticky top-0 bg-midnight-800">
+                  <tr className="text-xs text-white/50 uppercase">
+                    <th className="text-left p-3">Market</th>
+                    <th className="text-right p-3 w-20">Yes</th>
+                    <th className="text-right p-3 w-20">No</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {filteredKalshi.map((market, i) => (
+                    <tr key={market.id || i} className="hover:bg-white/5 transition">
+                      <td className="p-3">
+                        <div className="text-sm text-white/90 font-medium">
+                          {normalizeName(market.name)}
+                        </div>
+                        <div className="text-xs text-white/40 mt-0.5 font-mono">
+                          {market.series || market.id}
+                        </div>
+                      </td>
+                      <td className="p-3 text-right">
+                        <span className="font-mono text-profit font-medium">
+                          {(market.yes_price * 100).toFixed(0)}¢
+                        </span>
+                      </td>
+                      <td className="p-3 text-right">
+                        <span className="font-mono text-loss font-medium">
+                          {(market.no_price * 100).toFixed(0)}¢
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Last updated */}
+      {data?.last_updated && (
+        <div className="mt-4 text-center text-xs text-white/40">
+          Last updated: {formatDistanceToNow(new Date(data.last_updated), { addSuffix: true })}
+        </div>
+      )}
     </div>
   )
 }
