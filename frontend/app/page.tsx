@@ -76,8 +76,15 @@ export default function Dashboard() {
   const [searchQuery, setSearchQuery] = useState('')
 
   const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+  const isLocalhost = API_BASE.includes('localhost')
 
   const fetchData = useCallback(async () => {
+    // Skip fetch if pointing to localhost in production
+    if (isLocalhost && typeof window !== 'undefined' && !window.location.hostname.includes('localhost')) {
+      setError('Backend API not configured. Set NEXT_PUBLIC_API_URL environment variable in Vercel.')
+      setLoading(false)
+      return
+    }
     try {
       const response = await fetch(`${API_BASE}/api/arbitrage?min_difference=${minDifference}&limit=100`)
       if (!response.ok) throw new Error('Failed to fetch data')
