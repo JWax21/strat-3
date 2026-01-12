@@ -687,6 +687,9 @@ async def fetch_and_analyze_sports():
             # Calculate profit potential (in basis points)
             profit_bps = int(price_diff * 10000)
             
+            # Get current timestamp for price freshness
+            price_timestamp = datetime.utcnow().isoformat()
+            
             opp = {
                 "polymarket": {
                     "id": poly.id,
@@ -695,7 +698,13 @@ async def fetch_and_analyze_sports():
                     "no_price": poly.no_price,
                     "aligned_price": aligned_poly_price,  # Price for market_team
                     "url": f"https://polymarket.com/event/{poly.slug}" if hasattr(poly, 'slug') else "",
-                    "end_date": poly.end_date.isoformat() if poly.end_date else None
+                    "end_date": poly.end_date.isoformat() if poly.end_date else None,
+                    # Market metrics
+                    "volume": getattr(poly, 'volume', 0) or 0,
+                    "liquidity": getattr(poly, 'liquidity', 0) or 0,
+                    "volume_24h": getattr(poly, 'volume_24h', None),  # May not be available
+                    "open_interest": getattr(poly, 'open_interest', None),  # May not be available
+                    "fetched_at": price_timestamp
                 },
                 "kalshi": {
                     "id": kalshi.ticker,
@@ -705,7 +714,13 @@ async def fetch_and_analyze_sports():
                     "aligned_price": aligned_kalshi_price,  # Price for market_team
                     "url": f"https://kalshi.com/markets/{kalshi.ticker}",
                     "expected_expiration_time": kalshi.expected_expiration_time.isoformat() if kalshi.expected_expiration_time else None,
-                    "close_time": kalshi.close_time.isoformat() if kalshi.close_time else None
+                    "close_time": kalshi.close_time.isoformat() if kalshi.close_time else None,
+                    # Market metrics
+                    "volume": getattr(kalshi, 'volume', 0) or 0,
+                    "volume_24h": getattr(kalshi, 'volume_24h', 0) or 0,
+                    "open_interest": getattr(kalshi, 'open_interest', 0) or 0,
+                    "liquidity": None,  # Kalshi doesn't provide liquidity directly
+                    "fetched_at": price_timestamp
                 },
                 "market_team": market_team,  # Which team this arbitrage is for
                 "league": poly_info.league.value if poly_info else "unknown",

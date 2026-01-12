@@ -74,6 +74,12 @@ interface ArbitrageOpportunity {
     no_price: number
     url: string
     end_date: string | null
+    // Market metrics
+    volume?: number
+    volume_24h?: number | null
+    open_interest?: number | null
+    liquidity?: number
+    fetched_at?: string
   }
   kalshi: {
     id: string
@@ -83,6 +89,12 @@ interface ArbitrageOpportunity {
     url: string
     expected_expiration_time: string | null
     close_time: string | null
+    // Market metrics
+    volume?: number
+    volume_24h?: number
+    open_interest?: number
+    liquidity?: number | null
+    fetched_at?: string
   }
   league: string
   market_type: string
@@ -542,6 +554,11 @@ function OpportunityCard({ opportunity, index }: { opportunity: ArbitrageOpportu
             noPrice={opportunity.polymarket.no_price}
             isBuyYes={opportunity.buy_on === 'polymarket'}
             isBuyNo={opportunity.sell_on === 'polymarket'}
+            volume={opportunity.polymarket.volume}
+            volume24h={opportunity.polymarket.volume_24h}
+            openInterest={opportunity.polymarket.open_interest}
+            liquidity={opportunity.polymarket.liquidity}
+            fetchedAt={opportunity.polymarket.fetched_at}
           />
           <PriceCard
             platform="kalshi"
@@ -549,6 +566,11 @@ function OpportunityCard({ opportunity, index }: { opportunity: ArbitrageOpportu
             noPrice={opportunity.kalshi.no_price}
             isBuyYes={opportunity.buy_on === 'kalshi'}
             isBuyNo={opportunity.sell_on === 'kalshi'}
+            volume={opportunity.kalshi.volume}
+            volume24h={opportunity.kalshi.volume_24h}
+            openInterest={opportunity.kalshi.open_interest}
+            liquidity={opportunity.kalshi.liquidity}
+            fetchedAt={opportunity.kalshi.fetched_at}
           />
         </div>
 
@@ -615,15 +637,33 @@ function PriceCard({
   yesPrice, 
   noPrice, 
   isBuyYes, 
-  isBuyNo 
+  isBuyNo,
+  volume,
+  volume24h,
+  openInterest,
+  liquidity,
+  fetchedAt
 }: {
   platform: 'polymarket' | 'kalshi'
   yesPrice: number
   noPrice: number
   isBuyYes: boolean
   isBuyNo: boolean
+  volume?: number
+  volume24h?: number | null
+  openInterest?: number | null
+  liquidity?: number | null
+  fetchedAt?: string
 }) {
   const badgeClass = platform === 'polymarket' ? 'badge-polymarket' : 'badge-kalshi'
+  
+  // Format numbers compactly
+  const formatNumber = (num: number | null | undefined): string => {
+    if (num === null || num === undefined) return '—'
+    if (num >= 1_000_000) return `$${(num / 1_000_000).toFixed(1)}M`
+    if (num >= 1_000) return `$${(num / 1_000).toFixed(1)}K`
+    return `$${num.toFixed(0)}`
+  }
   
   return (
     <div className="p-3 rounded-lg bg-white/5">
@@ -631,6 +671,11 @@ function PriceCard({
         <span className={clsx("px-2 py-0.5 rounded text-xs font-medium", badgeClass)}>
           {platform === 'polymarket' ? 'Polymarket' : 'Kalshi'}
         </span>
+        {fetchedAt && (
+          <span className="text-[10px] text-white/30 font-mono">
+            {new Date(fetchedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+          </span>
+        )}
       </div>
       
       <div className="grid grid-cols-2 gap-2">
@@ -658,6 +703,22 @@ function PriceCard({
           <div className={clsx("font-mono font-bold", isBuyNo ? "text-profit" : "text-white/80")}>
             {(noPrice * 100).toFixed(1)}¢
           </div>
+        </div>
+      </div>
+      
+      {/* Market metrics row */}
+      <div className="mt-2 pt-2 border-t border-white/5 grid grid-cols-3 gap-1 text-[10px]">
+        <div className="text-center">
+          <div className="text-white/30">24h Vol</div>
+          <div className="text-white/60 font-mono">{formatNumber(volume24h)}</div>
+        </div>
+        <div className="text-center">
+          <div className="text-white/30">Open Int</div>
+          <div className="text-white/60 font-mono">{openInterest !== null && openInterest !== undefined ? formatNumber(openInterest) : '—'}</div>
+        </div>
+        <div className="text-center">
+          <div className="text-white/30">Liquidity</div>
+          <div className="text-white/60 font-mono">{formatNumber(liquidity)}</div>
         </div>
       </div>
     </div>

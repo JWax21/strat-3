@@ -45,6 +45,9 @@ class PolymarketMarket:
     status: str
     slug: str
     image: Optional[str]
+    # Additional market metrics
+    volume_24h: float = 0.0  # 24-hour trading volume
+    open_interest: float = 0.0  # Total open interest
     
     @property
     def yes_price(self) -> float:
@@ -68,6 +71,8 @@ class PolymarketMarket:
             "yes_price": self.yes_price,
             "no_price": self.no_price,
             "volume": self.volume,
+            "volume_24h": self.volume_24h,
+            "open_interest": self.open_interest,
             "liquidity": self.liquidity,
             "end_date": self.end_date.isoformat() if self.end_date else None,
             "category": self.category,
@@ -467,7 +472,10 @@ class PolymarketClient:
             tags=data.get("tags", []) if isinstance(data.get("tags"), list) else [],
             status=data.get("active", True) and "active" or "closed",
             slug=data.get("slug", ""),
-            image=data.get("image", None)
+            image=data.get("image", None),
+            # Additional metrics - Polymarket uses volume24hr and openInterest
+            volume_24h=float(data.get("volume24hr", 0) or 0),
+            open_interest=float(data.get("openInterest", 0) or 0)
         )
     
     async def search_markets(self, query: str, limit: int = 50) -> List[PolymarketMarket]:
