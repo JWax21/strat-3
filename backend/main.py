@@ -622,20 +622,62 @@ async def fetch_and_analyze_sports():
         matches = state.sports_matcher.match_markets(poly_markets, kalshi_markets)
         
         # Calculate arbitrage opportunities from sports matches
+        # IMPORTANT: Align prices correctly by team!
+        # - Polymarket: YES = away team wins (first team in slug)
+        # - Kalshi: Ticker ends with winner abbreviation (e.g., -SAC means YES = Kings win)
         sports_opportunities = []
+        normalizer = get_normalizer()
+        
         for match in matches:
             poly = match["polymarket"]
             kalshi = match["kalshi"]
+            poly_info = match.get("poly_info")
             
-            poly_yes = poly.yes_price
-            kalshi_yes = kalshi.yes_price
+            # Parse Polymarket teams from slug
+            # Format: nba-lal-sac-2026-01-12 -> away=lal (Lakers), home=sac (Kings)
+            poly_slug = poly.slug if hasattr(poly, 'slug') else ""
+            poly_away, poly_home, game_date, sport = normalizer.parse_polymarket_slug(poly_slug)
             
-            # Calculate price difference
-            price_diff = abs(poly_yes - kalshi_yes)
+            # Parse which team Kalshi's YES refers to from the ticker
+            # Format: KXNBAGAME-26JAN12LALSAC-SAC (last part is the winner)
+            kalshi_ticker = kalshi.ticker
+            ticker_parts = kalshi_ticker.split("-")
+            kalshi_yes_team_abbrev = ticker_parts[-1].lower() if ticker_parts else ""
+            kalshi_yes_team = normalizer.normalize_team(kalshi_yes_team_abbrev, sport)
+            
+            # Skip if we can't determine alignment
+            if not poly_away or not poly_home or not kalshi_yes_team:
+                continue
+            
+            # Polymarket: YES = away team wins, NO = home team wins
+            poly_away_price = poly.yes_price  # Price for away team winning
+            poly_home_price = poly.no_price   # Price for home team winning
+            
+            # Align prices based on which team Kalshi's YES refers to
+            if kalshi_yes_team == poly_away:
+                # Both refer to away team
+                aligned_poly_price = poly_away_price
+                aligned_kalshi_price = kalshi.yes_price
+                market_team = poly_away
+            elif kalshi_yes_team == poly_home:
+                # Kalshi YES is for home team, Poly NO is for home team
+                aligned_poly_price = poly_home_price
+                aligned_kalshi_price = kalshi.yes_price
+                market_team = poly_home
+            else:
+                # Can't align - skip
+                continue
+            
+            # Calculate TRUE price difference (after alignment)
+            price_diff = abs(aligned_poly_price - aligned_kalshi_price)
             price_diff_pct = price_diff * 100
             
+            # Skip tiny differences (less than 1%)
+            if price_diff_pct < 1.0:
+                continue
+            
             # Determine arbitrage direction
-            if poly_yes < kalshi_yes:
+            if aligned_poly_price < aligned_kalshi_price:
                 buy_platform = "polymarket"
                 sell_platform = "kalshi"
             else:
@@ -649,30 +691,33 @@ async def fetch_and_analyze_sports():
                 "polymarket": {
                     "id": poly.id,
                     "question": poly.question,
-                    "yes_price": poly_yes,
+                    "yes_price": poly.yes_price,
                     "no_price": poly.no_price,
+                    "aligned_price": aligned_poly_price,  # Price for market_team
                     "url": f"https://polymarket.com/event/{poly.slug}" if hasattr(poly, 'slug') else "",
                     "end_date": poly.end_date.isoformat() if poly.end_date else None
                 },
                 "kalshi": {
                     "id": kalshi.ticker,
                     "question": kalshi.question,
-                    "yes_price": kalshi_yes,
+                    "yes_price": kalshi.yes_price,
                     "no_price": kalshi.no_price,
+                    "aligned_price": aligned_kalshi_price,  # Price for market_team
                     "url": f"https://kalshi.com/markets/{kalshi.ticker}",
                     "expected_expiration_time": kalshi.expected_expiration_time.isoformat() if kalshi.expected_expiration_time else None,
                     "close_time": kalshi.close_time.isoformat() if kalshi.close_time else None
                 },
-                "league": match["poly_info"].league.value,
-                "market_type": match["poly_info"].market_type.value,
-                "team": match["poly_info"].team,
+                "market_team": market_team,  # Which team this arbitrage is for
+                "league": poly_info.league.value if poly_info else "unknown",
+                "market_type": poly_info.market_type.value if poly_info else "unknown",
+                "team": market_team,
                 "price_difference": price_diff,
                 "price_difference_percent": price_diff_pct,
                 "profit_bps": profit_bps,
                 "buy_on": buy_platform,
                 "sell_on": sell_platform,
-                "match_score": match["score"],
-                "match_reason": match["match_reason"]
+                "match_score": match.get("score", 0),
+                "match_reason": match.get("match_reason", "")
             }
             
             sports_opportunities.append(opp)
@@ -808,35 +853,94 @@ async def get_all_sports_markets():
     kalshi_futures = [m for m in kalshi_formatted if m.get("category", "") == "futures"]
     
     # Find potential matches (same normalized name and date)
+    # IMPORTANT: Align outcomes correctly!
+    # - Polymarket: YES = away_team wins (first team in slug)
+    # - Kalshi: Separate markets for each team, ticker ends with winner abbreviation
+    #   e.g., KXNBAGAME-26JAN12LALSAC-SAC means YES = Kings win
+    #         KXNBAGAME-26JAN12LALSAC-LAL means YES = Lakers win
     matches = []
+    seen_game_dates = set()  # Track unique games to avoid duplicates
+    
     for pm in poly_single_game:
         if not pm.get("normalized_name") or pm["normalized_name"] == pm["name"]:
             continue  # Skip if normalization failed
+        
+        poly_away = pm.get("away_team")
+        poly_home = pm.get("home_team")
+        if not poly_away or not poly_home:
+            continue
+            
         for km in kalshi_single_game:
             if not km.get("normalized_name") or km["normalized_name"] == km["name"]:
                 continue
+            
             # Check if teams match (order-agnostic)
-            poly_teams = {pm.get("away_team"), pm.get("home_team")} - {None}
-            kalshi_teams = {km.get("away_team"), km.get("home_team")} - {None}
-            if poly_teams == kalshi_teams and len(poly_teams) == 2:
-                # Check date matches
-                if pm.get("game_date") == km.get("game_date"):
-                    matches.append({
-                        "normalized_name": pm["normalized_name"],
-                        "game_date": pm["game_date"],
-                        "polymarket": {
-                            "id": pm["id"],
-                            "yes_price": pm["yes_price"],
-                            "no_price": pm["no_price"],
-                        },
-                        "kalshi": {
-                            "id": km["id"],
-                            "yes_price": km["yes_price"],
-                            "no_price": km["no_price"],
-                        },
-                        "price_diff_yes": abs(pm["yes_price"] - km["yes_price"]) * 100,
-                        "price_diff_no": abs(pm["no_price"] - km["no_price"]) * 100,
-                    })
+            kalshi_away = km.get("away_team")
+            kalshi_home = km.get("home_team")
+            poly_teams = {poly_away, poly_home}
+            kalshi_teams = {kalshi_away, kalshi_home} - {None}
+            
+            if poly_teams != kalshi_teams or len(kalshi_teams) != 2:
+                continue
+                
+            # Check date matches
+            if pm.get("game_date") != km.get("game_date"):
+                continue
+            
+            # Parse which team Kalshi's YES refers to from the ticker
+            # Format: KXNBAGAME-26JAN12LALSAC-SAC (last part is the winner)
+            kalshi_ticker = km.get("id", "")
+            ticker_parts = kalshi_ticker.split("-")
+            kalshi_yes_team_abbrev = ticker_parts[-1].lower() if ticker_parts else ""
+            
+            # Normalize the Kalshi winner abbreviation to canonical team name
+            kalshi_yes_team = normalizer.normalize_team(kalshi_yes_team_abbrev, 
+                                                        normalizer.detect_sport("", kalshi_ticker, ""))
+            
+            # Skip if we can't determine which team Kalshi YES is for
+            if not kalshi_yes_team or kalshi_yes_team not in poly_teams:
+                continue
+            
+            # Polymarket: YES = away_team wins, NO = home_team wins
+            poly_away_price = pm["yes_price"]  # Price for away team winning
+            poly_home_price = pm["no_price"]   # Price for home team winning
+            
+            # Align prices based on which team Kalshi's YES refers to
+            if kalshi_yes_team == poly_away:
+                # Both refer to away team - compare directly
+                aligned_poly_price = poly_away_price
+                aligned_kalshi_price = km["yes_price"]
+                market_team = poly_away
+            else:
+                # Kalshi YES is for home team, Poly NO is for home team
+                aligned_poly_price = poly_home_price
+                aligned_kalshi_price = km["yes_price"]
+                market_team = poly_home
+            
+            # Calculate true price difference (should be small if no arbitrage)
+            price_diff = abs(aligned_poly_price - aligned_kalshi_price) * 100
+            
+            # Create unique key to avoid duplicate matches
+            game_key = f"{pm['game_date']}_{poly_away}_{poly_home}_{market_team}"
+            if game_key in seen_game_dates:
+                continue
+            seen_game_dates.add(game_key)
+            
+            matches.append({
+                "normalized_name": pm["normalized_name"],
+                "game_date": pm["game_date"],
+                "market_for_team": market_team,  # Which team this comparison is for
+                "polymarket": {
+                    "id": pm["id"],
+                    "price": aligned_poly_price,  # Price for market_team to win
+                    "slug": pm.get("slug", ""),
+                },
+                "kalshi": {
+                    "id": km["id"],
+                    "price": aligned_kalshi_price,  # Price for market_team to win
+                },
+                "price_diff": price_diff,  # True arbitrage difference
+            })
     
     return {
         "polymarket": {
