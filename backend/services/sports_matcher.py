@@ -49,11 +49,13 @@ class SportsMarketInfo:
     """Extracted information from a sports market."""
     league: League
     market_type: MarketType
-    team: Optional[str]
+    team: Optional[str]  # Primary team (for futures) or home team (for games)
+    away_team: Optional[str]  # Away team (for games)
     player: Optional[str]
     championship: Optional[str]
     season: Optional[str]
     year: Optional[int]
+    game_date: Optional[str]  # Date for single-game markets (YYYY-MM-DD)
     raw_question: str
 
 
@@ -247,10 +249,27 @@ class SportsMarketMatcher:
         
         return League.UNKNOWN
     
-    def detect_market_type(self, text: str, ticker: str = "") -> MarketType:
+    def detect_market_type(self, text: str, ticker: str = "", slug: str = "") -> MarketType:
         """Detect the type of sports market."""
         text_lower = text.lower()
         ticker_lower = ticker.lower()
+        slug_lower = slug.lower()
+        
+        # SINGLE GAME MARKETS - Check first as they're most specific
+        # Polymarket slugs: nba-uta-cle-2026-01-12, nfl-hou-pit-2026-01-12
+        # Kalshi tickers: KXNBAGAME-26JAN12UTACLE, KXNFLGAME-26JAN12HOUPIT
+        single_game_indicators = [
+            "game" in ticker_lower and any(sport in ticker_lower for sport in ["nba", "nfl", "nhl", "mlb", "ncaa", "wnba"]),
+            any(slug_lower.startswith(f"{sport}-") and len(slug_lower.split("-")) >= 4 for sport in ["nba", "nfl", "nhl", "mlb", "cbb", "cfb", "wnba"]),
+            " vs " in text_lower or " vs. " in text_lower or " at " in text_lower,
+        ]
+        
+        # Single game detection - check text patterns
+        if any(single_game_indicators):
+            # Make sure it's not a championship or award market
+            futures_keywords = ["champion", "mvp", "rookie", "award", "super bowl", "finals", "stanley cup", "world series"]
+            if not any(kw in text_lower for kw in futures_keywords):
+                return MarketType.GAME_WINNER
         
         # MVP - MUST distinguish between season MVP and championship game MVP
         if "mvp" in text_lower or "sbmvp" in ticker_lower:
@@ -287,7 +306,6 @@ class SportsMarketMatcher:
                 return MarketType.MVP_SEASON
             
             # Default MVP to season if not clearly a game MVP
-            # But be cautious - log for investigation
             logger.warning(f"Ambiguous MVP market detected, defaulting to season: {text[:80]}")
             return MarketType.MVP_SEASON
         
@@ -305,20 +323,21 @@ class SportsMarketMatcher:
             return MarketType.PLAYER_AWARD
         
         # Parlays (Kalshi MVE markets)
-        if "mve" in ticker_lower or "multigame" in ticker_lower or "singlegame" in ticker_lower:
+        if "mve" in ticker_lower or "multigame" in ticker_lower:
             return MarketType.PARLAY
         
-        # Player props
-        if ":" in text_lower or "yards" in text_lower or "points" in text_lower or "receptions" in text_lower:
+        # Player props - check for prop market patterns
+        player_prop_patterns = [
+            "points over", "points under", "rebounds over", "assists over",
+            "yards over", "yards under", "touchdowns over", "receptions over",
+            "o/u", "spread:", "1h spread", "1h moneyline",
+        ]
+        if any(pattern in text_lower for pattern in player_prop_patterns):
             return MarketType.PLAYER_PROP
         
         # Season wins
         if "wins" in text_lower and any(w in text_lower for w in ["season", "regular", "total"]):
             return MarketType.SEASON_WINS
-        
-        # Single game
-        if "game" in text_lower or "match" in text_lower:
-            return MarketType.GAME_WINNER
         
         return MarketType.UNKNOWN
     
@@ -382,24 +401,195 @@ class SportsMarketMatcher:
         
         return None
     
+    def extract_teams_from_matchup(self, text: str, ticker: str = "", slug: str = "") -> Tuple[Optional[str], Optional[str]]:
+        """
+        Extract both teams from a single-game matchup.
+        
+        Handles formats:
+        - "Jazz vs. Cavaliers" -> (Utah Jazz, Cleveland Cavaliers)
+        - "Utah at Cleveland" -> (Cleveland Cavaliers, Utah Jazz) - home team first
+        - Ticker: KXNBAGAME-26JAN12UTACLE -> teams from abbrevs
+        - Slug: nba-uta-cle-2026-01-12 -> teams from abbrevs
+        
+        Returns (home_team, away_team) tuple.
+        """
+        text_lower = text.lower()
+        
+        # Team abbreviation mappings for all leagues
+        TEAM_ABBREVS = {
+            # NBA
+            "atl": "Atlanta Hawks", "bos": "Boston Celtics", "bkn": "Brooklyn Nets", "bk": "Brooklyn Nets",
+            "cha": "Charlotte Hornets", "chi": "Chicago Bulls", "cle": "Cleveland Cavaliers",
+            "dal": "Dallas Mavericks", "den": "Denver Nuggets", "det": "Detroit Pistons",
+            "gsw": "Golden State Warriors", "gs": "Golden State Warriors", "hou": "Houston Rockets",
+            "ind": "Indiana Pacers", "lac": "Los Angeles Clippers", "lal": "Los Angeles Lakers",
+            "mem": "Memphis Grizzlies", "mia": "Miami Heat", "mil": "Milwaukee Bucks",
+            "min": "Minnesota Timberwolves", "nop": "New Orleans Pelicans", "nyk": "New York Knicks",
+            "okc": "Oklahoma City Thunder", "orl": "Orlando Magic", "phi": "Philadelphia 76ers",
+            "phx": "Phoenix Suns", "por": "Portland Trail Blazers", "sac": "Sacramento Kings",
+            "sas": "San Antonio Spurs", "tor": "Toronto Raptors", "uta": "Utah Jazz",
+            "was": "Washington Wizards",
+            # NFL
+            "ari": "Arizona Cardinals", "bal": "Baltimore Ravens", "buf": "Buffalo Bills",
+            "car": "Carolina Panthers", "cin": "Cincinnati Bengals", "dal": "Dallas Cowboys",
+            "den": "Denver Broncos", "det": "Detroit Lions", "gb": "Green Bay Packers",
+            "hou": "Houston Texans", "ind": "Indianapolis Colts", "jax": "Jacksonville Jaguars",
+            "kc": "Kansas City Chiefs", "lv": "Las Vegas Raiders", "lar": "Los Angeles Rams",
+            "lac": "Los Angeles Chargers", "mia": "Miami Dolphins", "min": "Minnesota Vikings",
+            "ne": "New England Patriots", "no": "New Orleans Saints", "nyg": "New York Giants",
+            "nyj": "New York Jets", "phi": "Philadelphia Eagles", "pit": "Pittsburgh Steelers",
+            "sf": "San Francisco 49ers", "sea": "Seattle Seahawks", "tb": "Tampa Bay Buccaneers",
+            "ten": "Tennessee Titans", "was": "Washington Commanders",
+            # NHL
+            "ana": "Anaheim Ducks", "bos": "Boston Bruins", "buf": "Buffalo Sabres",
+            "cgy": "Calgary Flames", "car": "Carolina Hurricanes", "chi": "Chicago Blackhawks",
+            "col": "Colorado Avalanche", "cbj": "Columbus Blue Jackets", "dal": "Dallas Stars",
+            "det": "Detroit Red Wings", "edm": "Edmonton Oilers", "fla": "Florida Panthers",
+            "la": "Los Angeles Kings", "lak": "Los Angeles Kings", "min": "Minnesota Wild",
+            "mtl": "Montreal Canadiens", "nsh": "Nashville Predators", "njd": "New Jersey Devils",
+            "nj": "New Jersey Devils", "nyi": "New York Islanders", "nyr": "New York Rangers",
+            "ott": "Ottawa Senators", "phi": "Philadelphia Flyers", "pit": "Pittsburgh Penguins",
+            "sjs": "San Jose Sharks", "sea": "Seattle Kraken", "stl": "St. Louis Blues",
+            "tbl": "Tampa Bay Lightning", "tor": "Toronto Maple Leafs", "van": "Vancouver Canucks",
+            "vgk": "Vegas Golden Knights", "wpg": "Winnipeg Jets", "wsh": "Washington Capitals",
+        }
+        
+        home_team = None
+        away_team = None
+        
+        # Try to extract from Polymarket slug first (most reliable): nba-uta-cle-2026-01-12
+        if slug:
+            parts = slug.lower().split("-")
+            if len(parts) >= 4:
+                # Format: sport-away-home-date (away team travels to home)
+                away_abbr = parts[1]
+                home_abbr = parts[2]
+                if away_abbr in TEAM_ABBREVS:
+                    away_team = TEAM_ABBREVS[away_abbr]
+                if home_abbr in TEAM_ABBREVS:
+                    home_team = TEAM_ABBREVS[home_abbr]
+        
+        # Try Kalshi ticker: KXNBAGAME-26JAN12UTACLE (last part has team abbrevs)
+        if ticker and not (home_team and away_team):
+            ticker_upper = ticker.upper()
+            # Extract last part after date: e.g., UTACLE from KXNBAGAME-26JAN12UTACLE
+            parts = ticker_upper.split("-")
+            for part in parts:
+                # Look for team codes at end of date part (e.g., JAN12UTACLE)
+                match = re.search(r'\d{2}([A-Z]{3})([A-Z]{2,3})$', part)
+                if match:
+                    away_abbr = match.group(1).lower()
+                    home_abbr = match.group(2).lower()
+                    if away_abbr in TEAM_ABBREVS:
+                        away_team = TEAM_ABBREVS[away_abbr]
+                    if home_abbr in TEAM_ABBREVS:
+                        home_team = TEAM_ABBREVS[home_abbr]
+        
+        # Try text parsing: "Jazz vs. Cavaliers" or "Utah at Cleveland"
+        if not (home_team and away_team):
+            # "Team1 vs Team2" pattern - first team listed is often away
+            vs_match = re.search(r'([a-z\s]+?)\s+(?:vs\.?|versus)\s+([a-z\s]+)', text_lower)
+            at_match = re.search(r'([a-z\s]+?)\s+at\s+([a-z\s]+)', text_lower)
+            
+            if at_match:
+                # "Team1 at Team2" - Team1 is away, Team2 is home
+                away_text = at_match.group(1).strip()
+                home_text = at_match.group(2).strip()
+            elif vs_match:
+                # "Team1 vs Team2" - assume first is away (road team listed first)
+                away_text = vs_match.group(1).strip()
+                home_text = vs_match.group(2).strip()
+            else:
+                away_text = home_text = ""
+            
+            if away_text and home_text:
+                # Try to normalize team names
+                for team_dict in [NBA_TEAMS, NFL_TEAMS, NHL_TEAMS]:
+                    if away_text in team_dict and not away_team:
+                        away_team = team_dict[away_text]
+                    if home_text in team_dict and not home_team:
+                        home_team = team_dict[home_text]
+        
+        return home_team, away_team
+    
+    def extract_game_date(self, slug: str = "", ticker: str = "", end_date: str = "") -> Optional[str]:
+        """
+        Extract game date from market data.
+        
+        Handles:
+        - Slug: nba-uta-cle-2026-01-12 -> 2026-01-12
+        - Ticker: KXNBAGAME-26JAN12UTACLE -> 2026-01-12
+        - End date from market data
+        
+        Returns date string in YYYY-MM-DD format.
+        """
+        # Try slug first: nba-uta-cle-2026-01-12
+        if slug:
+            match = re.search(r'(\d{4}-\d{2}-\d{2})', slug)
+            if match:
+                return match.group(1)
+        
+        # Try ticker: KXNBAGAME-26JAN12UTACLE
+        if ticker:
+            match = re.search(r'(\d{2})([A-Z]{3})(\d{1,2})', ticker.upper())
+            if match:
+                year_short = match.group(1)
+                month_abbr = match.group(2)
+                day = match.group(3)
+                
+                month_map = {
+                    "JAN": "01", "FEB": "02", "MAR": "03", "APR": "04",
+                    "MAY": "05", "JUN": "06", "JUL": "07", "AUG": "08",
+                    "SEP": "09", "OCT": "10", "NOV": "11", "DEC": "12"
+                }
+                
+                if month_abbr in month_map:
+                    month = month_map[month_abbr]
+                    year = f"20{year_short}"
+                    return f"{year}-{month}-{day.zfill(2)}"
+        
+        # Try end_date
+        if end_date:
+            match = re.search(r'(\d{4}-\d{2}-\d{2})', end_date)
+            if match:
+                return match.group(1)
+        
+        return None
+
     def extract_market_info(self, market: Any, platform: str) -> SportsMarketInfo:
         """Extract structured information from a market."""
         if platform == "polymarket":
             question = market.question
             ticker = ""
+            slug = market.slug if hasattr(market, 'slug') else ""
+            end_date = market.end_date.isoformat() if market.end_date else ""
         else:
             question = market.question or market.title
             ticker = market.ticker
+            slug = ""
+            end_date = market.expected_expiration_time.isoformat() if market.expected_expiration_time else ""
         
         league = self.detect_league(question + " " + ticker)
-        market_type = self.detect_market_type(question, ticker)
-        team = self.extract_team(question, league)
+        market_type = self.detect_market_type(question, ticker, slug)
         year = self.extract_year(question + " " + ticker)
         championship = self.normalize_championship(question)
         
-        # For Kalshi, try to extract team from ticker if not found in question
-        if platform == "kalshi" and not team and ticker:
-            team = self.extract_team_from_ticker(ticker, league)
+        # Initialize team fields
+        team = None
+        away_team = None
+        game_date = None
+        
+        # Handle single-game markets differently
+        if market_type == MarketType.GAME_WINNER:
+            home_team, away_team = self.extract_teams_from_matchup(question, ticker, slug)
+            team = home_team  # Primary team is home team
+            game_date = self.extract_game_date(slug, ticker, end_date)
+        else:
+            # For futures, extract single team
+            team = self.extract_team(question, league)
+            # For Kalshi, try to extract team from ticker if not found in question
+            if platform == "kalshi" and not team and ticker:
+                team = self.extract_team_from_ticker(ticker, league)
         
         # Extract player name (for MVP/award markets)
         player = None
@@ -413,10 +603,12 @@ class SportsMarketMatcher:
             league=league,
             market_type=market_type,
             team=team,
+            away_team=away_team,
             player=player,
             championship=championship,
             season=f"{year-1}-{str(year)[2:]}" if year else None,
             year=year,
+            game_date=game_date,
             raw_question=question
         )
     
@@ -509,6 +701,37 @@ class SportsMarketMatcher:
         
         score = 0.0
         
+        # SINGLE GAME MARKETS - Match on both teams + date
+        if poly_info.market_type == MarketType.GAME_WINNER:
+            # Need at least one team from each market
+            poly_teams = {poly_info.team, poly_info.away_team} - {None}
+            kalshi_teams = {kalshi_info.team, kalshi_info.away_team} - {None}
+            
+            if len(poly_teams) < 2 or len(kalshi_teams) < 2:
+                return 0.0, "missing_teams"
+            
+            # Both teams must match
+            if poly_teams == kalshi_teams:
+                score += 0.6
+                logger.info(f"GAME MATCH FOUND: {poly_teams}")
+                logger.info(f"  Poly: {poly_info.raw_question[:70]}")
+                logger.info(f"  Kalshi: {kalshi_info.raw_question[:70]}")
+            else:
+                return 0.0, "teams_mismatch"
+            
+            # Date should match (important for same teams playing multiple times)
+            if poly_info.game_date and kalshi_info.game_date:
+                if poly_info.game_date == kalshi_info.game_date:
+                    score += 0.4
+                else:
+                    # Different dates = different games
+                    return 0.0, "date_mismatch"
+            elif poly_info.game_date or kalshi_info.game_date:
+                # Only one has date - accept but lower score
+                score += 0.2
+            
+            return score, "game_winner_match"
+        
         # Championship markets: match on team + championship + year
         if poly_info.market_type == MarketType.CHAMPIONSHIP:
             # REQUIRE both teams to be present for championship markets
@@ -595,34 +818,43 @@ class SportsMarketMatcher:
         matches = []
         used_kalshi = set()
         
-        # Pre-process Polymarket markets
-        poly_sports = []
+        # Pre-process Polymarket markets - categorize by type
+        poly_games = []  # Single-game markets
+        poly_futures = []  # Futures/awards markets
+        
         for m in polymarket_markets:
             info = self.extract_market_info(m, "polymarket")
             if info.league != League.UNKNOWN and info.market_type != MarketType.UNKNOWN:
-                poly_sports.append((m, info))
+                if info.market_type == MarketType.GAME_WINNER:
+                    poly_games.append((m, info))
+                elif info.market_type not in [MarketType.PLAYER_PROP]:
+                    poly_futures.append((m, info))
         
-        # Pre-process Kalshi markets
-        kalshi_sports = []
+        # Pre-process Kalshi markets - categorize by type
+        kalshi_games = []  # Single-game markets
+        kalshi_futures = []  # Futures/awards markets
+        
         for m in kalshi_markets:
             info = self.extract_market_info(m, "kalshi")
             if info.league != League.UNKNOWN and info.market_type != MarketType.UNKNOWN:
                 # Skip parlay/MVE markets as they don't match Polymarket structure
-                if info.market_type not in [MarketType.PARLAY, MarketType.PLAYER_PROP]:
-                    kalshi_sports.append((m, info))
+                if info.market_type == MarketType.GAME_WINNER:
+                    kalshi_games.append((m, info))
+                elif info.market_type not in [MarketType.PARLAY, MarketType.PLAYER_PROP]:
+                    kalshi_futures.append((m, info))
         
         logger.info(
-            f"Found {len(poly_sports)} Polymarket and {len(kalshi_sports)} Kalshi "
-            f"sports markets (excluding parlays)"
+            f"Polymarket: {len(poly_games)} single-game, {len(poly_futures)} futures | "
+            f"Kalshi: {len(kalshi_games)} single-game, {len(kalshi_futures)} futures"
         )
         
-        # Match markets
-        for poly_market, poly_info in poly_sports:
+        # Match single-game markets first (higher priority for arbitrage)
+        for poly_market, poly_info in poly_games:
             best_match = None
             best_score = 0
             best_reason = ""
             
-            for kalshi_market, kalshi_info in kalshi_sports:
+            for kalshi_market, kalshi_info in kalshi_games:
                 if kalshi_market.ticker in used_kalshi:
                     continue
                 
@@ -640,11 +872,43 @@ class SportsMarketMatcher:
                     "poly_info": poly_info,
                     "kalshi_info": self.extract_market_info(best_match, "kalshi"),
                     "score": best_score,
-                    "match_reason": best_reason
+                    "match_reason": best_reason,
+                    "market_category": "single_game"
                 })
                 used_kalshi.add(best_match.ticker)
         
-        logger.info(f"Found {len(matches)} sports market matches")
+        # Match futures markets
+        for poly_market, poly_info in poly_futures:
+            best_match = None
+            best_score = 0
+            best_reason = ""
+            
+            for kalshi_market, kalshi_info in kalshi_futures:
+                if kalshi_market.ticker in used_kalshi:
+                    continue
+                
+                score, reason = self.calculate_match_score(poly_info, kalshi_info)
+                
+                if score > best_score and score >= self.match_threshold:
+                    best_score = score
+                    best_match = kalshi_market
+                    best_reason = reason
+            
+            if best_match:
+                matches.append({
+                    "polymarket": poly_market,
+                    "kalshi": best_match,
+                    "poly_info": poly_info,
+                    "kalshi_info": self.extract_market_info(best_match, "kalshi"),
+                    "score": best_score,
+                    "match_reason": best_reason,
+                    "market_category": "futures"
+                })
+                used_kalshi.add(best_match.ticker)
+        
+        game_matches = sum(1 for m in matches if m.get("market_category") == "single_game")
+        futures_matches = sum(1 for m in matches if m.get("market_category") == "futures")
+        logger.info(f"Found {len(matches)} matches: {game_matches} single-game, {futures_matches} futures")
         return matches
 
 

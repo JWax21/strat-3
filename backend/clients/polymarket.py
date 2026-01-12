@@ -503,8 +503,9 @@ class PolymarketClient:
         """
         Fetch sports-related markets from Polymarket.
         
-        Strategy: Get all active events and filter for sports-related titles,
-        then extract markets from those events.
+        Strategy: Get all active events with pagination and filter for:
+        1. Single-game markets (identified by slug pattern: sport-team-team-date)
+        2. Futures/awards markets (championship, MVP, etc.)
         
         Args:
             max_markets: Maximum markets to return
@@ -515,7 +516,10 @@ class PolymarketClient:
         all_sports_markets = []
         seen_ids = set()
         
-        # Sports-related keywords to match in event titles
+        # Slug prefixes for single-game markets
+        single_game_prefixes = ['nba-', 'nfl-', 'nhl-', 'mlb-', 'cbb-', 'cfb-', 'wnba-']
+        
+        # Sports-related keywords for futures/awards
         sports_title_keywords = [
             "super bowl", "nfl", "nba", "mlb", "nhl", "ufc", "mma",
             "championship", "playoffs", "world series", "stanley cup",
@@ -523,34 +527,65 @@ class PolymarketClient:
             "football", "basketball", "baseball", "hockey", "soccer",
             "premier league", "world cup", "ncaa", "college", 
             "passing yards", "rushing yards", "touchdown", "home run",
-            "defensive", "offensive", "protector", "comeback"
+            "defensive", "offensive", "protector", "comeback", "halftime",
+            "afc", "nfc", "division", "conference"
         ]
         
-        logger.info("Fetching sports events from Polymarket...")
+        logger.info("Fetching sports markets from Polymarket (including single-game)...")
         
         try:
-            # Get all active events
-            events = await self.get_all_active_events(max_events=300)
-            logger.info(f"Retrieved {len(events)} total events, filtering for sports...")
+            # Fetch more events with pagination to get single-game markets
+            all_events = []
+            offset = 0
+            batch_size = 100
+            max_events = 1000  # Get more events to find single-game markets
             
-            sports_events = []
-            for event in events:
+            while len(all_events) < max_events:
+                params = {
+                    "order": "id",
+                    "ascending": "false",
+                    "closed": "false",
+                    "limit": batch_size,
+                    "offset": offset
+                }
+                
+                data = await self._request(self.gamma_url, "/events", params)
+                events = data if isinstance(data, list) else data.get("events", [])
+                
+                if not events:
+                    break
+                    
+                all_events.extend(events)
+                offset += batch_size
+                
+                await asyncio.sleep(0.1)
+            
+            logger.info(f"Retrieved {len(all_events)} total events, filtering for sports...")
+            
+            single_game_count = 0
+            futures_count = 0
+            
+            for event in all_events:
                 event_title = event.get("title", "").lower()
+                event_slug = event.get("slug", "").lower()
                 event_category = (event.get("category") or "").lower()
                 
-                # Check if event is sports-related
-                is_sports = (
+                # Check if it's a single-game market (e.g., nba-uta-cle-2026-01-12)
+                is_single_game = any(
+                    event_slug.startswith(prefix) and len(event_slug.split('-')) >= 4
+                    for prefix in single_game_prefixes
+                )
+                
+                # Check if it's a sports futures/awards market
+                is_sports_futures = (
                     event_category == "sports" or
                     any(kw in event_title for kw in sports_title_keywords)
                 )
                 
-                if is_sports:
-                    sports_events.append(event)
-            
-            logger.info(f"Found {len(sports_events)} sports-related events")
-            
-            # Extract markets from sports events
-            for event in sports_events:
+                if not (is_single_game or is_sports_futures):
+                    continue
+                
+                # Extract markets from this event
                 event_markets = event.get("markets", [])
                 
                 for market_data in event_markets:
@@ -563,7 +598,13 @@ class PolymarketClient:
                     
                     try:
                         market = self._parse_market(market_data)
-                        if market and market.yes_price > 0:  # Filter out markets with no price
+                        if market and market.yes_price > 0:
+                            # Add sport type info to the market based on slug
+                            if is_single_game:
+                                market.category = f"single_game_{event_slug.split('-')[0]}"
+                                single_game_count += 1
+                            else:
+                                futures_count += 1
                             all_sports_markets.append(market)
                             seen_ids.add(market_id)
                     except Exception as e:
@@ -572,9 +613,11 @@ class PolymarketClient:
                 if len(all_sports_markets) >= max_markets:
                     break
             
+            logger.info(f"Found {single_game_count} single-game markets, {futures_count} futures/awards markets")
+            
         except Exception as e:
             logger.error(f"Failed to fetch sports events: {e}", exc_info=True)
         
-        logger.info(f"Found {len(all_sports_markets)} sports markets on Polymarket")
+        logger.info(f"Total sports markets on Polymarket: {len(all_sports_markets)}")
         return all_sports_markets[:max_markets]
 

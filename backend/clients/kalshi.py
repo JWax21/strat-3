@@ -366,8 +366,19 @@ class KalshiClient:
         
         return markets
     
-    # Sports series tickers for championship/award markets
-    SPORTS_SERIES = [
+    # Sports series tickers - SINGLE GAME markets (highest priority for arbitrage)
+    SINGLE_GAME_SERIES = [
+        "KXNBAGAME",       # NBA single games
+        "KXNFLGAME",       # NFL single games
+        "KXNHLGAME",       # NHL single games
+        "KXMLBGAME",       # MLB single games
+        "KXNCAABGAME",     # College Basketball single games
+        "KXNCAAFGAME",     # College Football single games
+        "KXWNBAGAME",      # WNBA single games
+    ]
+    
+    # Sports series tickers for championship/award markets (futures)
+    SPORTS_FUTURES_SERIES = [
         # Major Championships
         "KXSB",            # Super Bowl
         "KXNBA",           # NBA Championship
@@ -382,6 +393,7 @@ class KalshiClient:
         "KXNFLOROTY",      # Offensive Rookie of Year
         "KXNFLCPOY",       # Comeback Player of Year
         "KXNFLCOACH",      # Coach of the Year
+        "KXNFLMVP",        # NFL MVP
         # NBA Awards
         "KXNBAROY",        # NBA Rookie of the Year
         "KXNBAMVP",        # NBA MVP
@@ -396,19 +408,32 @@ class KalshiClient:
         "KXMLBNLROTY",     # NL Rookie of Year
     ]
     
-    async def get_sports_markets(self) -> List[KalshiMarket]:
+    async def get_sports_markets(self, include_single_games: bool = True) -> List[KalshiMarket]:
         """
-        Fetch sports championship/award markets from specific series.
+        Fetch sports markets from Kalshi including:
+        1. Single-game markets (NBA, NFL, NHL, MLB, etc.)
+        2. Championship/award futures
         
+        Args:
+            include_single_games: Whether to include single-game markets
+            
         Returns:
             List of sports markets
         """
         all_markets = []
         seen_tickers = set()
+        single_game_count = 0
+        futures_count = 0
         
-        logger.info(f"Fetching sports markets from {len(self.SPORTS_SERIES)} Kalshi series...")
+        # Combine series lists
+        all_series = []
+        if include_single_games:
+            all_series.extend(self.SINGLE_GAME_SERIES)
+        all_series.extend(self.SPORTS_FUTURES_SERIES)
         
-        for series_ticker in self.SPORTS_SERIES:
+        logger.info(f"Fetching sports markets from {len(all_series)} Kalshi series...")
+        
+        for series_ticker in all_series:
             try:
                 # Fetch markets for this series
                 markets = await self.get_markets(
@@ -419,19 +444,26 @@ class KalshiClient:
                 
                 for market in markets:
                     if market.ticker not in seen_tickers:
+                        # Tag the market type
+                        if series_ticker in self.SINGLE_GAME_SERIES:
+                            market.category = f"single_game_{series_ticker.replace('KX', '').replace('GAME', '').lower()}"
+                            single_game_count += 1
+                        else:
+                            market.category = "futures"
+                            futures_count += 1
                         all_markets.append(market)
                         seen_tickers.add(market.ticker)
                 
                 if markets:
-                    logger.info(f"Found {len(markets)} markets in series {series_ticker}")
+                    logger.debug(f"Found {len(markets)} markets in series {series_ticker}")
                 
-                await asyncio.sleep(0.2)  # Rate limiting
+                await asyncio.sleep(0.15)  # Rate limiting
                 
             except Exception as e:
                 logger.warning(f"Failed to fetch series {series_ticker}: {e}")
                 continue
         
-        logger.info(f"Total sports markets from Kalshi: {len(all_markets)}")
+        logger.info(f"Kalshi sports: {single_game_count} single-game, {futures_count} futures = {len(all_markets)} total")
         return all_markets
     
     async def get_all_open_markets(self, max_markets: int = 500) -> List[KalshiMarket]:
