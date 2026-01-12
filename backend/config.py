@@ -19,8 +19,8 @@ class Settings(BaseSettings):
     kalshi_rate_limit: int = 10  # Very conservative for Kalshi
     
     # Arbitrage Settings
-    min_price_difference_percent: float = 1.0
-    match_threshold: float = 0.75  # Minimum similarity for market matching (0-1)
+    min_price_difference_percent: float = 0.0  # Show all matches for testing
+    match_threshold: float = 0.01  # Very low threshold for testing market pulls
     
     # Server Config
     host: str = "0.0.0.0"
