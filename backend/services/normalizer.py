@@ -695,8 +695,146 @@ class MarketNormalizer:
         return True
 
 
+# =============================================================================
+# REVERSE MAPPINGS: Canonical Name -> Polymarket Abbreviation
+# Used to construct Polymarket slugs from Kalshi game data
+# =============================================================================
+NBA_TEAM_TO_ABBREV: Dict[str, str] = {
+    "Atlanta Hawks": "atl", "Boston Celtics": "bos", "Brooklyn Nets": "bkn",
+    "Charlotte Hornets": "cha", "Chicago Bulls": "chi", "Cleveland Cavaliers": "cle",
+    "Dallas Mavericks": "dal", "Denver Nuggets": "den", "Detroit Pistons": "det",
+    "Golden State Warriors": "gsw", "Houston Rockets": "hou", "Indiana Pacers": "ind",
+    "LA Clippers": "lac", "LA Lakers": "lal", "Memphis Grizzlies": "mem",
+    "Miami Heat": "mia", "Milwaukee Bucks": "mil", "Minnesota Timberwolves": "min",
+    "New Orleans Pelicans": "nop", "New York Knicks": "nyk", 
+    "Oklahoma City Thunder": "okc", "Orlando Magic": "orl", "Philadelphia 76ers": "phi",
+    "Phoenix Suns": "phx", "Portland Trail Blazers": "por", "Sacramento Kings": "sac",
+    "San Antonio Spurs": "sas", "Toronto Raptors": "tor", "Utah Jazz": "uta",
+    "Washington Wizards": "was",
+}
+
+NFL_TEAM_TO_ABBREV: Dict[str, str] = {
+    "Buffalo Bills": "buf", "Miami Dolphins": "mia", "New England Patriots": "ne",
+    "New York Jets": "nyj", "Baltimore Ravens": "bal", "Cincinnati Bengals": "cin",
+    "Cleveland Browns": "cle", "Pittsburgh Steelers": "pit", "Houston Texans": "hou",
+    "Indianapolis Colts": "ind", "Jacksonville Jaguars": "jax", "Tennessee Titans": "ten",
+    "Denver Broncos": "den", "Kansas City Chiefs": "kc", "Las Vegas Raiders": "lv",
+    "LA Chargers": "lac", "Dallas Cowboys": "dal", "New York Giants": "nyg",
+    "Philadelphia Eagles": "phi", "Washington Commanders": "was", "Chicago Bears": "chi",
+    "Detroit Lions": "det", "Green Bay Packers": "gb", "Minnesota Vikings": "min",
+    "Atlanta Falcons": "atl", "Carolina Panthers": "car", "New Orleans Saints": "no",
+    "Tampa Bay Buccaneers": "tb", "Arizona Cardinals": "ari", "LA Rams": "lar",
+    "San Francisco 49ers": "sf", "Seattle Seahawks": "sea",
+}
+
+NHL_TEAM_TO_ABBREV: Dict[str, str] = {
+    "Boston Bruins": "bos", "Buffalo Sabres": "buf", "Detroit Red Wings": "det",
+    "Florida Panthers": "fla", "Montreal Canadiens": "mtl", "Ottawa Senators": "ott",
+    "Tampa Bay Lightning": "tbl", "Toronto Maple Leafs": "tor", 
+    "Carolina Hurricanes": "car", "Columbus Blue Jackets": "cbj", 
+    "New Jersey Devils": "njd", "New York Islanders": "nyi", "New York Rangers": "nyr",
+    "Philadelphia Flyers": "phi", "Pittsburgh Penguins": "pit", "Washington Capitals": "wsh",
+    "Chicago Blackhawks": "chi", "Colorado Avalanche": "col", "Dallas Stars": "dal",
+    "Minnesota Wild": "min", "Nashville Predators": "nsh", "St. Louis Blues": "stl",
+    "Winnipeg Jets": "wpg", "Utah Hockey Club": "uta", "Anaheim Ducks": "ana",
+    "Calgary Flames": "cgy", "Edmonton Oilers": "edm", "LA Kings": "lak",
+    "San Jose Sharks": "sjs", "Seattle Kraken": "sea", "Vancouver Canucks": "van",
+    "Vegas Golden Knights": "vgk",
+}
+
+MLB_TEAM_TO_ABBREV: Dict[str, str] = {
+    "Baltimore Orioles": "bal", "Boston Red Sox": "bos", "New York Yankees": "nyy",
+    "Tampa Bay Rays": "tb", "Toronto Blue Jays": "tor", "Chicago White Sox": "cws",
+    "Cleveland Guardians": "cle", "Detroit Tigers": "det", "Kansas City Royals": "kc",
+    "Minnesota Twins": "min", "Houston Astros": "hou", "LA Angels": "laa",
+    "Oakland Athletics": "oak", "Seattle Mariners": "sea", "Texas Rangers": "tex",
+    "Atlanta Braves": "atl", "Miami Marlins": "mia", "New York Mets": "nym",
+    "Philadelphia Phillies": "phi", "Washington Nationals": "wsh", "Chicago Cubs": "chc",
+    "Cincinnati Reds": "cin", "Milwaukee Brewers": "mil", "Pittsburgh Pirates": "pit",
+    "St. Louis Cardinals": "stl", "Arizona Diamondbacks": "ari", "Colorado Rockies": "col",
+    "LA Dodgers": "lad", "San Diego Padres": "sd", "San Francisco Giants": "sf",
+}
+
+
+class PolymarketSlugBuilder:
+    """
+    Builds Polymarket slugs from game data.
+    
+    This allows us to query Polymarket directly for specific games
+    instead of paginating through all events.
+    """
+    
+    # Mapping from Sport enum to Polymarket slug prefix
+    SPORT_TO_PREFIX = {
+        Sport.NBA: "nba",
+        Sport.NFL: "nfl",
+        Sport.NHL: "nhl",
+        Sport.MLB: "mlb",
+        Sport.NCAA_MBB: "cbb",
+        Sport.NCAA_WBB: "cwbb",
+        Sport.NCAA_FB: "cfb",
+    }
+    
+    def __init__(self):
+        self.team_to_abbrev = {
+            Sport.NBA: NBA_TEAM_TO_ABBREV,
+            Sport.NFL: NFL_TEAM_TO_ABBREV,
+            Sport.NHL: NHL_TEAM_TO_ABBREV,
+            Sport.MLB: MLB_TEAM_TO_ABBREV,
+        }
+    
+    def get_team_abbrev(self, team_name: str, sport: Sport) -> Optional[str]:
+        """Get the Polymarket abbreviation for a team."""
+        team_map = self.team_to_abbrev.get(sport, {})
+        return team_map.get(team_name)
+    
+    def build_slug(
+        self, 
+        sport: Sport, 
+        away_team: str, 
+        home_team: str, 
+        game_date: str
+    ) -> Optional[str]:
+        """
+        Build a Polymarket slug for a game.
+        
+        Format: {sport}-{away_abbrev}-{home_abbrev}-{YYYY}-{MM}-{DD}
+        Example: nba-uta-cle-2026-01-12
+        
+        Args:
+            sport: The sport enum
+            away_team: Canonical away team name
+            home_team: Canonical home team name
+            game_date: Game date in YYYY-MM-DD format
+            
+        Returns:
+            Polymarket slug or None if unable to build
+        """
+        prefix = self.SPORT_TO_PREFIX.get(sport)
+        if not prefix:
+            return None
+        
+        away_abbrev = self.get_team_abbrev(away_team, sport)
+        home_abbrev = self.get_team_abbrev(home_team, sport)
+        
+        if not away_abbrev or not home_abbrev:
+            logger.warning(f"Missing abbreviation: {away_team}={away_abbrev}, {home_team}={home_abbrev}")
+            return None
+        
+        # Validate date format
+        if not game_date or len(game_date) != 10:
+            return None
+        
+        return f"{prefix}-{away_abbrev}-{home_abbrev}-{game_date}"
+    
+    def build_event_url(self, slug: str) -> str:
+        """Build the Polymarket event URL from a slug."""
+        return f"https://polymarket.com/event/{slug}"
+
+
 # Global normalizer instance
 _normalizer = None
+_slug_builder = None
 
 def get_normalizer() -> MarketNormalizer:
     """Get or create the global normalizer instance."""
@@ -704,4 +842,11 @@ def get_normalizer() -> MarketNormalizer:
     if _normalizer is None:
         _normalizer = MarketNormalizer()
     return _normalizer
+
+def get_slug_builder() -> PolymarketSlugBuilder:
+    """Get or create the global slug builder instance."""
+    global _slug_builder
+    if _slug_builder is None:
+        _slug_builder = PolymarketSlugBuilder()
+    return _slug_builder
 

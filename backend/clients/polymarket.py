@@ -499,6 +499,68 @@ class PolymarketClient:
             logger.error(f"Search failed: {e}")
             return []
     
+    async def get_event_by_slug(self, slug: str) -> Optional[Dict[str, Any]]:
+        """
+        Fetch a specific event by its slug.
+        
+        Args:
+            slug: The event slug (e.g., 'nba-uta-cle-2026-01-12')
+            
+        Returns:
+            Event data or None if not found
+        """
+        try:
+            data = await self._request(
+                self.gamma_url,
+                f"/events/{slug}"
+            )
+            return data
+        except Exception as e:
+            logger.debug(f"Event {slug} not found: {e}")
+            return None
+    
+    async def get_events_by_slugs(self, slugs: List[str]) -> List[PolymarketMarket]:
+        """
+        Fetch multiple events by their slugs.
+        This is more efficient than paginating through all events.
+        
+        Args:
+            slugs: List of event slugs to fetch
+            
+        Returns:
+            List of markets from the requested events
+        """
+        markets = []
+        seen_ids = set()
+        
+        logger.info(f"Fetching {len(slugs)} specific events from Polymarket...")
+        
+        for slug in slugs:
+            try:
+                event = await self.get_event_by_slug(slug)
+                if not event:
+                    continue
+                
+                # Extract markets from the event
+                event_markets = event.get("markets", [])
+                for market_data in event_markets:
+                    market_id = str(market_data.get("id", ""))
+                    if market_id in seen_ids or not market_id:
+                        continue
+                    
+                    market = self._parse_market(market_data)
+                    if market and market.yes_price > 0:
+                        markets.append(market)
+                        seen_ids.add(market_id)
+                
+                await asyncio.sleep(0.05)  # Small delay for rate limiting
+                
+            except Exception as e:
+                logger.warning(f"Failed to fetch event {slug}: {e}")
+        
+        logger.info(f"Fetched {len(markets)} markets from {len(slugs)} events")
+        return markets
+    
     async def get_sports_markets(self, max_markets: int = 500) -> List[PolymarketMarket]:
         """
         Fetch sports-related markets from Polymarket.

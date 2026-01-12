@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from config import get_settings
 from clients import PolymarketClient, KalshiClient
 from services import MarketMatcher, ArbitrageDetector, ArbitrageOpportunity, SportsMarketMatcher
-from services.normalizer import get_normalizer
+from services.normalizer import get_normalizer, get_slug_builder, Sport
 from utils.rate_limiter import RateLimiterManager
 
 # Configure logging
@@ -549,31 +549,70 @@ async def refresh_sports_data(background_tasks: BackgroundTasks):
 
 
 async def fetch_and_analyze_sports():
-    """Background task to fetch and analyze sports markets."""
+    """
+    Background task to fetch and analyze sports markets.
+    
+    Uses "Kalshi-first" strategy:
+    1. Fetch Kalshi sports games (well-structured by series)
+    2. Parse game info (teams, dates) from Kalshi markets
+    3. Build Polymarket slugs from that data
+    4. Fetch Polymarket markets by those specific slugs
+    5. Match and analyze for arbitrage
+    """
     if state.is_fetching:
         return
     
     state.is_fetching = True
-    logger.info("Starting sports market fetch and analysis...")
+    logger.info("Starting sports market fetch and analysis (Kalshi-first strategy)...")
     
     try:
-        # Fetch sports-specific markets from both platforms
-        # Using sports-specific methods for both platforms
-        poly_task = state.polymarket_client.get_sports_markets(max_markets=500)
-        kalshi_task = state.kalshi_client.get_sports_markets()  # Fetches from sports series
+        normalizer = get_normalizer()
+        slug_builder = get_slug_builder()
         
-        poly_markets, kalshi_markets = await asyncio.gather(
-            poly_task, kalshi_task, return_exceptions=True
-        )
+        # Step 1: Fetch Kalshi sports games first
+        logger.info("Step 1: Fetching Kalshi sports markets...")
+        kalshi_markets = await state.kalshi_client.get_sports_markets()
         
-        if isinstance(poly_markets, Exception):
-            logger.error(f"Polymarket fetch failed: {poly_markets}")
-            poly_markets = []
         if isinstance(kalshi_markets, Exception):
             logger.error(f"Kalshi fetch failed: {kalshi_markets}")
             kalshi_markets = []
         
-        logger.info(f"Fetched {len(poly_markets)} Polymarket and {len(kalshi_markets)} Kalshi markets")
+        logger.info(f"Found {len(kalshi_markets)} Kalshi sports markets")
+        
+        # Step 2: Parse Kalshi games and build Polymarket slugs
+        logger.info("Step 2: Building Polymarket slugs from Kalshi games...")
+        polymarket_slugs = set()
+        kalshi_game_info = {}  # Map slug -> kalshi game info for matching
+        
+        for market in kalshi_markets:
+            ticker = market.ticker
+            # Parse the Kalshi ticker to extract teams and date
+            away_team, home_team, game_date, sport = normalizer.parse_kalshi_ticker(ticker)
+            
+            if away_team and home_team and game_date and sport != Sport.UNKNOWN:
+                # Build the Polymarket slug
+                slug = slug_builder.build_slug(sport, away_team, home_team, game_date)
+                if slug:
+                    polymarket_slugs.add(slug)
+                    kalshi_game_info[slug] = {
+                        "away": away_team,
+                        "home": home_team,
+                        "date": game_date,
+                        "sport": sport
+                    }
+                    logger.debug(f"Built slug: {slug} from ticker: {ticker}")
+        
+        logger.info(f"Built {len(polymarket_slugs)} unique Polymarket slugs to query")
+        
+        # Step 3: Fetch Polymarket markets by those specific slugs
+        logger.info("Step 3: Fetching Polymarket events by slug...")
+        poly_markets = await state.polymarket_client.get_events_by_slugs(list(polymarket_slugs))
+        
+        if isinstance(poly_markets, Exception):
+            logger.error(f"Polymarket fetch failed: {poly_markets}")
+            poly_markets = []
+        
+        logger.info(f"Fetched {len(poly_markets)} Polymarket markets from {len(polymarket_slugs)} slugs")
         
         # Update raw market cache
         state.cached_polymarket_markets = [m.to_dict() for m in poly_markets]
