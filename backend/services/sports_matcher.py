@@ -444,9 +444,10 @@ class SportsMarketMatcher:
         """
         text_lower = text.lower()
         
-        # Team abbreviation mappings for all leagues
-        TEAM_ABBREVS = {
-            # NBA
+        # Sport-specific team abbreviation mappings
+        # IMPORTANT: Must use separate dicts per sport to avoid conflicts like "HOU"
+        # (Houston Rockets in NBA vs Houston Texans in NFL)
+        NBA_ABBREVS = {
             "atl": "Atlanta Hawks", "bos": "Boston Celtics", "bkn": "Brooklyn Nets", "bk": "Brooklyn Nets",
             "cha": "Charlotte Hornets", "chi": "Chicago Bulls", "cle": "Cleveland Cavaliers",
             "dal": "Dallas Mavericks", "den": "Denver Nuggets", "det": "Detroit Pistons",
@@ -458,7 +459,9 @@ class SportsMarketMatcher:
             "phx": "Phoenix Suns", "por": "Portland Trail Blazers", "sac": "Sacramento Kings",
             "sas": "San Antonio Spurs", "tor": "Toronto Raptors", "uta": "Utah Jazz",
             "was": "Washington Wizards",
-            # NFL
+        }
+        
+        NFL_ABBREVS = {
             "ari": "Arizona Cardinals", "bal": "Baltimore Ravens", "buf": "Buffalo Bills",
             "car": "Carolina Panthers", "cin": "Cincinnati Bengals", "dal": "Dallas Cowboys",
             "den": "Denver Broncos", "det": "Detroit Lions", "gb": "Green Bay Packers",
@@ -469,7 +472,9 @@ class SportsMarketMatcher:
             "nyj": "New York Jets", "phi": "Philadelphia Eagles", "pit": "Pittsburgh Steelers",
             "sf": "San Francisco 49ers", "sea": "Seattle Seahawks", "tb": "Tampa Bay Buccaneers",
             "ten": "Tennessee Titans", "was": "Washington Commanders",
-            # NHL
+        }
+        
+        NHL_ABBREVS = {
             "ana": "Anaheim Ducks", "bos": "Boston Bruins", "buf": "Buffalo Sabres",
             "cgy": "Calgary Flames", "car": "Carolina Hurricanes", "chi": "Chicago Blackhawks",
             "col": "Colorado Avalanche", "cbj": "Columbus Blue Jackets", "dal": "Dallas Stars",
@@ -482,6 +487,44 @@ class SportsMarketMatcher:
             "tbl": "Tampa Bay Lightning", "tor": "Toronto Maple Leafs", "van": "Vancouver Canucks",
             "vgk": "Vegas Golden Knights", "wpg": "Winnipeg Jets", "wsh": "Washington Capitals",
         }
+        
+        MLB_ABBREVS = {
+            "bal": "Baltimore Orioles", "bos": "Boston Red Sox", "nyy": "New York Yankees",
+            "tb": "Tampa Bay Rays", "tor": "Toronto Blue Jays", "cws": "Chicago White Sox",
+            "cle": "Cleveland Guardians", "det": "Detroit Tigers", "kc": "Kansas City Royals",
+            "min": "Minnesota Twins", "hou": "Houston Astros", "laa": "LA Angels",
+            "oak": "Oakland Athletics", "sea": "Seattle Mariners", "tex": "Texas Rangers",
+            "atl": "Atlanta Braves", "mia": "Miami Marlins", "nym": "New York Mets",
+            "phi": "Philadelphia Phillies", "wsh": "Washington Nationals", "chc": "Chicago Cubs",
+            "cin": "Cincinnati Reds", "mil": "Milwaukee Brewers", "pit": "Pittsburgh Pirates",
+            "stl": "St. Louis Cardinals", "ari": "Arizona Diamondbacks", "col": "Colorado Rockies",
+            "lad": "LA Dodgers", "sd": "San Diego Padres", "sf": "San Francisco Giants",
+        }
+        
+        # Detect sport from slug, ticker, or text to use correct team mapping
+        sport = None
+        combined = f"{slug} {ticker} {text}".lower()
+        if "nba" in combined or "kxnbagame" in combined:
+            sport = "nba"
+        elif "nfl" in combined or "kxnflgame" in combined:
+            sport = "nfl"
+        elif "nhl" in combined or "kxnhlgame" in combined:
+            sport = "nhl"
+        elif "mlb" in combined or "kxmlbgame" in combined:
+            sport = "mlb"
+        
+        # Select the appropriate team map based on detected sport
+        if sport == "nba":
+            TEAM_ABBREVS = NBA_ABBREVS
+        elif sport == "nfl":
+            TEAM_ABBREVS = NFL_ABBREVS
+        elif sport == "nhl":
+            TEAM_ABBREVS = NHL_ABBREVS
+        elif sport == "mlb":
+            TEAM_ABBREVS = MLB_ABBREVS
+        else:
+            # Fallback: NBA first, then check others (maintain original behavior for unknown sports)
+            TEAM_ABBREVS = {**NHL_ABBREVS, **MLB_ABBREVS, **NFL_ABBREVS, **NBA_ABBREVS}  # NBA last = highest priority
         
         home_team = None
         away_team = None
