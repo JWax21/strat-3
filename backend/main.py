@@ -57,7 +57,7 @@ async def lifespan(app: FastAPI):
     state.polymarket_client = PolymarketClient()
     state.kalshi_client = KalshiClient()
     state.market_matcher = MarketMatcher(match_threshold=settings.match_threshold)
-    state.sports_matcher = SportsMarketMatcher(match_threshold=0.70)
+    state.sports_matcher = SportsMarketMatcher(match_threshold=settings.match_threshold)
     state.arbitrage_detector = ArbitrageDetector(
         min_difference_percent=settings.min_price_difference_percent
     )
