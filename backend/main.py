@@ -972,14 +972,14 @@ async def get_all_sports_markets():
                 "market_for_team": market_team,  # Which team this comparison is for
                 "polymarket": {
                     "id": pm["id"],
-                    "price": aligned_poly_price,  # Price for market_team to win
+                    "yes_price": aligned_poly_price,  # Price for market_team to win
                     "slug": pm.get("slug", ""),
                 },
                 "kalshi": {
                     "id": km["id"],
-                    "price": aligned_kalshi_price,  # Price for market_team to win
+                    "yes_price": aligned_kalshi_price,  # Price for market_team to win
                 },
-                "price_diff": price_diff,  # True arbitrage difference
+                "price_diff_yes": price_diff,  # True arbitrage difference
             })
     
     return {
