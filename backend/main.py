@@ -799,11 +799,14 @@ async def get_all_sports_markets():
     Get all sports markets from both platforms for debugging/comparison.
     Shows normalized names for easy matching comparison.
     """
+    from services.sports_matcher import SportsMarketMatcher
+    
     normalizer = get_normalizer()
+    matcher = SportsMarketMatcher()
     poly_markets = state.cached_polymarket_markets
     kalshi_markets = state.cached_kalshi_markets
     
-    # Format Polymarket markets with normalized names
+    # Format Polymarket markets with normalized names and market type
     poly_formatted = []
     for m in poly_markets:
         category = m.get("category", "")
@@ -813,6 +816,9 @@ async def get_all_sports_markets():
         # Use normalizer to extract teams and create normalized name
         away_team, home_team, game_date, sport = normalizer.parse_polymarket_slug(slug)
         normalized_name = normalizer.create_normalized_name(away_team, home_team) if away_team and home_team else question
+        
+        # Detect market type
+        market_type = matcher.detect_market_type(question, "", slug)
         
         poly_formatted.append({
             "id": m.get("id"),
@@ -826,10 +832,11 @@ async def get_all_sports_markets():
             "yes_price": m.get("yes_price", 0),
             "no_price": m.get("no_price", 0),
             "category": category,
+            "market_type": market_type.value,
             "end_date": m.get("end_date"),
         })
     
-    # Format Kalshi markets with normalized names
+    # Format Kalshi markets with normalized names and market type
     kalshi_formatted = []
     for m in kalshi_markets:
         category = m.get("category", "")
@@ -839,6 +846,9 @@ async def get_all_sports_markets():
         # Use normalizer to extract teams and create normalized name
         away_team, home_team, game_date, sport = normalizer.parse_kalshi_ticker(ticker)
         normalized_name = normalizer.create_normalized_name(away_team, home_team) if away_team and home_team else question
+        
+        # Detect market type
+        market_type = matcher.detect_market_type(question, ticker, "")
         
         kalshi_formatted.append({
             "id": ticker,
@@ -852,6 +862,7 @@ async def get_all_sports_markets():
             "yes_price": m.get("yes_price", 0),
             "no_price": m.get("no_price", 0),
             "category": category,
+            "market_type": market_type.value,
             "expiration": m.get("expected_expiration_time"),
         })
     

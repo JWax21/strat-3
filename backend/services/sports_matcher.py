@@ -41,7 +41,16 @@ class MarketType(Enum):
     GAME_WINNER = "game_winner"  # Single game outcomes (moneyline)
     SPREAD = "spread"  # Point spread bets (e.g., Lakers -9.5)
     OVER_UNDER = "over_under"  # Total points/goals bets (e.g., O/U 250.5)
-    PLAYER_PROP = "player_prop"  # Player stats in a game
+    # Player Props - broken down by stat type
+    PLAYER_PROP_POINTS = "player_prop_points"  # Points over/under
+    PLAYER_PROP_REBOUNDS = "player_prop_rebounds"  # Rebounds over/under
+    PLAYER_PROP_ASSISTS = "player_prop_assists"  # Assists over/under
+    PLAYER_PROP_THREES = "player_prop_threes"  # 3-pointers made over/under
+    PLAYER_PROP_RUSH = "player_prop_rush"  # Rushing yards over/under
+    PLAYER_PROP_PASS = "player_prop_pass"  # Passing yards over/under
+    PLAYER_PROP_REC = "player_prop_rec"  # Receiving yards over/under
+    PLAYER_PROP_TD = "player_prop_td"  # Touchdowns over/under
+    PLAYER_PROP_OTHER = "player_prop_other"  # Other player props
     SEASON_WINS = "season_wins"  # Win totals
     PARLAY = "parlay"  # Multi-leg bets
     UNKNOWN = "unknown"
@@ -258,28 +267,95 @@ class SportsMarketMatcher:
         ticker_lower = ticker.lower()
         slug_lower = slug.lower()
         
-        # SPREAD MARKETS - Check FIRST to avoid misclassifying as game winner
+        # PLAYER PROPS - Check FIRST (before spread/O/U which can have similar patterns)
+        # Kalshi series: KXNBAPTS (points), KXNBARBS (rebounds), KXNBAASTS (assists), KXNBATHREES (3s)
+        # Kalshi series: KXNFLPTS, KXNFLRUSH, KXNFLPASS, KXNFLREC, KXNFLTD
+        # Polymarket slugs: nba-sas-okc-2026-01-13-points-victor-wembanyama-21pt5
+        #                   nba-sas-okc-2026-01-13-rebounds-victor-wembanyama-9pt5
+        #                   nba-sas-okc-2026-01-13-assists-stephon-castle-5pt5
+        
+        # Check for Kalshi player prop series
+        kalshi_prop_series = {
+            "kxnbapts": MarketType.PLAYER_PROP_POINTS,
+            "kxnbarbs": MarketType.PLAYER_PROP_REBOUNDS,
+            "kxnbaasts": MarketType.PLAYER_PROP_ASSISTS,
+            "kxnbathrees": MarketType.PLAYER_PROP_THREES,
+            "kxnflpts": MarketType.PLAYER_PROP_POINTS,
+            "kxnflrush": MarketType.PLAYER_PROP_RUSH,
+            "kxnflpass": MarketType.PLAYER_PROP_PASS,
+            "kxnflrec": MarketType.PLAYER_PROP_REC,
+            "kxnfltd": MarketType.PLAYER_PROP_TD,
+        }
+        
+        for series, prop_type in kalshi_prop_series.items():
+            if series in ticker_lower:
+                return prop_type
+        
+        # Check for Polymarket player prop slugs
+        polymarket_prop_patterns = {
+            "-points-": MarketType.PLAYER_PROP_POINTS,
+            "-rebounds-": MarketType.PLAYER_PROP_REBOUNDS,
+            "-assists-": MarketType.PLAYER_PROP_ASSISTS,
+            "-threes-": MarketType.PLAYER_PROP_THREES,
+            "-3-pointers-": MarketType.PLAYER_PROP_THREES,
+            "-rushing-": MarketType.PLAYER_PROP_RUSH,
+            "-passing-": MarketType.PLAYER_PROP_PASS,
+            "-receiving-": MarketType.PLAYER_PROP_REC,
+            "-touchdowns-": MarketType.PLAYER_PROP_TD,
+            "-touchdown-": MarketType.PLAYER_PROP_TD,
+        }
+        
+        for pattern, prop_type in polymarket_prop_patterns.items():
+            if pattern in slug_lower:
+                return prop_type
+        
+        # Check text patterns for player props
+        player_prop_text_patterns = {
+            ("points over", "points under", "points o/u", ": points over"): MarketType.PLAYER_PROP_POINTS,
+            ("rebounds over", "rebounds under", "rebounds o/u", ": rebounds over"): MarketType.PLAYER_PROP_REBOUNDS,
+            ("assists over", "assists under", "assists o/u", ": assists over"): MarketType.PLAYER_PROP_ASSISTS,
+            ("3-pointers over", "threes over", "three-pointers over"): MarketType.PLAYER_PROP_THREES,
+            ("rushing yards", "rush yards"): MarketType.PLAYER_PROP_RUSH,
+            ("passing yards", "pass yards"): MarketType.PLAYER_PROP_PASS,
+            ("receiving yards", "rec yards", "receptions over"): MarketType.PLAYER_PROP_REC,
+            ("touchdowns over", "anytime touchdown", "first touchdown"): MarketType.PLAYER_PROP_TD,
+        }
+        
+        for patterns, prop_type in player_prop_text_patterns.items():
+            if any(p in text_lower for p in patterns):
+                return prop_type
+        
+        # Generic player prop detection (if specific type not identified)
+        generic_prop_indicators = [
+            "records" in text_lower and ("+" in text_lower or "points" in text_lower or "rebounds" in text_lower),
+            bool(re.search(r'\d+\+?\s*(points|rebounds|assists|yards|touchdowns)', text_lower)),
+        ]
+        if any(generic_prop_indicators):
+            return MarketType.PLAYER_PROP_OTHER
+        
+        # SPREAD MARKETS - Check before game winner
         # Polymarket: "Spread: Lakers (-9.5)", "Spread: Oilers (-1.5)"
         # Also check for spread patterns without the "Spread:" prefix
         spread_indicators = [
             "spread:" in text_lower,
-            "spread" in slug_lower,
-            bool(re.search(r'\(\-?\d+\.?\d*\)', text_lower)),  # e.g., (-9.5), (+3), (-1.5)
-            " -" in text_lower and ".5)" in text_lower,  # Lakers -9.5
-            "handicap" in text_lower,
+            "-spread-" in slug_lower,
+            "handicap" in text_lower or "handicap" in slug_lower,
+            bool(re.search(r'spread.*\(\-?\d+\.?\d*\)', text_lower)),  # Spread: Team (-9.5)
         ]
         if any(spread_indicators):
             return MarketType.SPREAD
         
-        # OVER/UNDER MARKETS - Check before game winner
+        # OVER/UNDER MARKETS (Team totals, not player props)
         # Polymarket: "Jazz vs. Cavaliers: O/U 250.5", "Over/Under 48.5"
+        # Polymarket slug: nba-sas-okc-2026-01-13-total-228pt5
         over_under_indicators = [
-            "o/u" in text_lower,
+            "o/u" in text_lower and not any(p in text_lower for p in ["points over", "rebounds over", "assists over"]),
             "over/under" in text_lower,
             "over under" in text_lower,
+            "-total-" in slug_lower,
             "total points" in text_lower,
             "total goals" in text_lower,
-            bool(re.search(r'\b(over|under)\s*\d+\.?\d*\b', text_lower)),  # over 250.5, under 48
+            "games total" in text_lower,
         ]
         if any(over_under_indicators):
             return MarketType.OVER_UNDER
@@ -295,10 +371,13 @@ class SportsMarketMatcher:
         
         # Single game detection - check text patterns
         if any(single_game_indicators):
-            # Make sure it's not a championship or award market
+            # Make sure it's not a championship, award, or prop market
             futures_keywords = ["champion", "mvp", "rookie", "award", "super bowl", "finals", "stanley cup", "world series"]
-            if not any(kw in text_lower for kw in futures_keywords):
-                return MarketType.GAME_WINNER
+            prop_keywords = ["points", "rebounds", "assists", "yards", "touchdowns", "over", "under"]
+            if not any(kw in text_lower for kw in futures_keywords) and not any(kw in text_lower for kw in prop_keywords):
+                # Also check slug doesn't have prop patterns
+                if not any(p in slug_lower for p in ["-points-", "-rebounds-", "-assists-", "-total-", "-spread-"]):
+                    return MarketType.GAME_WINNER
         
         # MVP - MUST distinguish between season MVP and championship game MVP
         if "mvp" in text_lower or "sbmvp" in ticker_lower:
@@ -354,15 +433,6 @@ class SportsMarketMatcher:
         # Parlays (Kalshi MVE markets)
         if "mve" in ticker_lower or "multigame" in ticker_lower:
             return MarketType.PARLAY
-        
-        # Player props - check for prop market patterns
-        player_prop_patterns = [
-            "points over", "points under", "rebounds over", "assists over",
-            "yards over", "yards under", "touchdowns over", "receptions over",
-            "o/u", "spread:", "1h spread", "1h moneyline",
-        ]
-        if any(pattern in text_lower for pattern in player_prop_patterns):
-            return MarketType.PLAYER_PROP
         
         # Season wins
         if "wins" in text_lower and any(w in text_lower for w in ["season", "regular", "total"]):
@@ -877,6 +947,20 @@ class SportsMarketMatcher:
         
         return 0.0, "unsupported_market_type"
     
+    def is_player_prop(self, market_type: MarketType) -> bool:
+        """Check if market type is a player prop."""
+        return market_type in [
+            MarketType.PLAYER_PROP_POINTS,
+            MarketType.PLAYER_PROP_REBOUNDS,
+            MarketType.PLAYER_PROP_ASSISTS,
+            MarketType.PLAYER_PROP_THREES,
+            MarketType.PLAYER_PROP_RUSH,
+            MarketType.PLAYER_PROP_PASS,
+            MarketType.PLAYER_PROP_REC,
+            MarketType.PLAYER_PROP_TD,
+            MarketType.PLAYER_PROP_OTHER,
+        ]
+    
     def match_markets(
         self,
         polymarket_markets: List[PolymarketMarket],
@@ -891,20 +975,24 @@ class SportsMarketMatcher:
         used_kalshi = set()
         
         # Pre-process Polymarket markets - categorize by type
-        poly_games = []  # Single-game markets
+        poly_games = []  # Single-game markets (moneyline)
         poly_futures = []  # Futures/awards markets
+        poly_props = []  # Player prop markets
         
         for m in polymarket_markets:
             info = self.extract_market_info(m, "polymarket")
             if info.league != League.UNKNOWN and info.market_type != MarketType.UNKNOWN:
                 if info.market_type == MarketType.GAME_WINNER:
                     poly_games.append((m, info))
-                elif info.market_type not in [MarketType.PLAYER_PROP]:
+                elif self.is_player_prop(info.market_type):
+                    poly_props.append((m, info))
+                elif info.market_type not in [MarketType.SPREAD, MarketType.OVER_UNDER]:
                     poly_futures.append((m, info))
         
         # Pre-process Kalshi markets - categorize by type
-        kalshi_games = []  # Single-game markets
+        kalshi_games = []  # Single-game markets (moneyline)
         kalshi_futures = []  # Futures/awards markets
+        kalshi_props = []  # Player prop markets
         
         for m in kalshi_markets:
             info = self.extract_market_info(m, "kalshi")
@@ -912,12 +1000,14 @@ class SportsMarketMatcher:
                 # Skip parlay/MVE markets as they don't match Polymarket structure
                 if info.market_type == MarketType.GAME_WINNER:
                     kalshi_games.append((m, info))
-                elif info.market_type not in [MarketType.PARLAY, MarketType.PLAYER_PROP]:
+                elif self.is_player_prop(info.market_type):
+                    kalshi_props.append((m, info))
+                elif info.market_type not in [MarketType.PARLAY, MarketType.SPREAD, MarketType.OVER_UNDER]:
                     kalshi_futures.append((m, info))
         
         logger.info(
-            f"Polymarket: {len(poly_games)} single-game, {len(poly_futures)} futures | "
-            f"Kalshi: {len(kalshi_games)} single-game, {len(kalshi_futures)} futures"
+            f"Polymarket: {len(poly_games)} moneyline, {len(poly_props)} props, {len(poly_futures)} futures | "
+            f"Kalshi: {len(kalshi_games)} moneyline, {len(kalshi_props)} props, {len(kalshi_futures)} futures"
         )
         
         # Match single-game markets first (higher priority for arbitrage)
@@ -948,6 +1038,10 @@ class SportsMarketMatcher:
                     "market_category": "single_game"
                 })
                 used_kalshi.add(best_match.ticker)
+        
+        # Match player prop markets (TODO: implement prop matching logic)
+        # For now, log the counts but don't match (props require player + stat type + threshold matching)
+        logger.info(f"Player props available: Poly={len(poly_props)}, Kalshi={len(kalshi_props)} (matching not yet implemented)")
         
         # Match futures markets
         for poly_market, poly_info in poly_futures:

@@ -62,6 +62,7 @@ interface MarketItem {
   yes_price: number
   no_price: number
   category: string
+  market_type?: string  // game_winner, spread, over_under, player_prop_points, etc.
   end_date?: string
   expiration?: string
 }
@@ -737,40 +738,44 @@ interface UnifiedMarket {
 function UnifiedMarketsTable({
   polyMarkets,
   kalshiMarkets,
-  sportColors
+  sportColors,
+  marketTypeFilter
 }: {
   polyMarkets: MarketItem[]
   kalshiMarkets: MarketItem[]
   sportColors: Record<string, string>
+  marketTypeFilter: 'moneyline' | 'spread' | 'over_under' | 'props' | 'all'
 }) {
-  // Helper to check if a market is a moneyline/game winner (not spread/total/props)
-  const isMoneyline = (market: MarketItem): boolean => {
-    const name = (market.name || '').toLowerCase()
-    const slug = (market.slug || '').toLowerCase()
+  // Helper to check market type based on API market_type field
+  const matchesMarketType = (market: MarketItem): boolean => {
+    const marketType = market.market_type || ''
     
-    // Exclude spreads, totals, and player props
-    const excludePatterns = [
-      'spread', 'o/u', 'over', 'under', 'total', 
-      'points', 'pts', 'rebounds', 'assists', 'anytime',
-      'touchdown', 'scorer', 'player'
-    ]
-    
-    for (const pattern of excludePatterns) {
-      if (name.includes(pattern) || slug.includes(pattern)) {
-        return false
-      }
+    switch (marketTypeFilter) {
+      case 'moneyline':
+        return marketType === 'game_winner'
+      case 'spread':
+        return marketType === 'spread'
+      case 'over_under':
+        return marketType === 'over_under'
+      case 'props':
+        return marketType.startsWith('player_prop')
+      case 'all':
+        return true
+      default:
+        return marketType === 'game_winner'  // Default to moneyline
     }
-    return true
   }
 
-  // Filter to only moneyline markets
-  const polyMoneylines = polyMarkets.filter(isMoneyline)
-  const kalshiMoneylines = kalshiMarkets.filter(isMoneyline)
+  // Filter markets by selected type
+  const polyFiltered = polyMarkets.filter(matchesMarketType)
+  const kalshiFiltered = kalshiMarkets.filter(matchesMarketType)
 
-  // Deduplicate Polymarket markets by normalized_name + game_date
+  // Deduplicate Polymarket markets by normalized_name + game_date + market_type
   const polyByGame = new Map<string, MarketItem>()
-  for (const poly of polyMoneylines) {
-    const key = `${poly.normalized_name || poly.name}-${poly.game_date || ''}-${poly.sport || ''}`
+  for (const poly of polyFiltered) {
+    // For props, include player name in key to avoid deduping different players
+    const propKey = poly.market_type?.startsWith('player_prop') ? `-${poly.name.slice(0, 30)}` : ''
+    const key = `${poly.normalized_name || poly.name}-${poly.game_date || ''}-${poly.sport || ''}-${poly.market_type || ''}${propKey}`
     // Keep the first one (or could keep by highest volume)
     if (!polyByGame.has(key)) {
       polyByGame.set(key, poly)
@@ -779,10 +784,12 @@ function UnifiedMarketsTable({
   const dedupedPoly = Array.from(polyByGame.values())
 
   // Deduplicate Kalshi markets - they have 2 markets per game (one for each team to win)
-  // Group by normalized_name + game_date and keep one (they have the same odds inverted)
+  // Group by normalized_name + game_date + market_type and keep one (they have the same odds inverted)
   const kalshiByGame = new Map<string, MarketItem>()
-  for (const kalshi of kalshiMoneylines) {
-    const key = `${kalshi.normalized_name || kalshi.name}-${kalshi.game_date || ''}-${kalshi.sport || ''}`
+  for (const kalshi of kalshiFiltered) {
+    // For props, include player name in key to avoid deduping different players
+    const propKey = kalshi.market_type?.startsWith('player_prop') ? `-${kalshi.name.slice(0, 30)}` : ''
+    const key = `${kalshi.normalized_name || kalshi.name}-${kalshi.game_date || ''}-${kalshi.sport || ''}-${kalshi.market_type || ''}${propKey}`
     // Keep the first one - the odds are just inverted on the second one
     if (!kalshiByGame.has(key)) {
       kalshiByGame.set(key, kalshi)
@@ -955,6 +962,7 @@ function AllMarketsTab({
   refreshing: boolean
 }) {
   const [marketType, setMarketType] = useState<'single_game' | 'futures' | 'matches'>('single_game')
+  const [betType, setBetType] = useState<'moneyline' | 'spread' | 'over_under' | 'props' | 'all'>('moneyline')
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedSport, setSelectedSport] = useState<string | null>(null)
 
@@ -1121,7 +1129,7 @@ function AllMarketsTab({
 
       {/* Sport Filter */}
       {marketType !== 'matches' && sportsList.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2 mb-6">
+        <div className="flex flex-wrap items-center gap-2 mb-4">
           <span className="text-xs text-white/40 uppercase tracking-wider mr-2">Sport:</span>
           <button
             onClick={() => setSelectedSport(null)}
@@ -1153,6 +1161,33 @@ function AllMarketsTab({
               ({filteredPoly.length} Poly / {filteredKalshi.length} Kalshi)
             </span>
           )}
+        </div>
+      )}
+
+      {/* Bet Type Filter */}
+      {marketType !== 'matches' && (
+        <div className="flex flex-wrap items-center gap-2 mb-6">
+          <span className="text-xs text-white/40 uppercase tracking-wider mr-2">Bet Type:</span>
+          {[
+            { key: 'moneyline', label: 'Moneyline' },
+            { key: 'spread', label: 'Spread' },
+            { key: 'over_under', label: 'O/U Totals' },
+            { key: 'props', label: 'Player Props' },
+            { key: 'all', label: 'All Types' },
+          ].map(({ key, label }) => (
+            <button
+              key={key}
+              onClick={() => setBetType(key as typeof betType)}
+              className={clsx(
+                "px-3 py-1 rounded-full text-xs font-medium transition-all border",
+                betType === key
+                  ? "bg-electric-purple/20 text-electric-purple border-electric-purple/30"
+                  : "bg-transparent text-white/50 border-white/10 hover:border-white/20"
+              )}
+            >
+              {label}
+            </button>
+          ))}
         </div>
       )}
 
@@ -1230,6 +1265,7 @@ function AllMarketsTab({
           polyMarkets={filteredPoly} 
           kalshiMarkets={filteredKalshi}
           sportColors={sportColors}
+          marketTypeFilter={betType}
         />
       )}
 
