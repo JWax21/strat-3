@@ -778,6 +778,18 @@ function UnifiedMarketsTable({
   }
   const dedupedPoly = Array.from(polyByGame.values())
 
+  // Deduplicate Kalshi markets - they have 2 markets per game (one for each team to win)
+  // Group by normalized_name + game_date and keep one (they have the same odds inverted)
+  const kalshiByGame = new Map<string, MarketItem>()
+  for (const kalshi of kalshiMoneylines) {
+    const key = `${kalshi.normalized_name || kalshi.name}-${kalshi.game_date || ''}-${kalshi.sport || ''}`
+    // Keep the first one - the odds are just inverted on the second one
+    if (!kalshiByGame.has(key)) {
+      kalshiByGame.set(key, kalshi)
+    }
+  }
+  const dedupedKalshi = Array.from(kalshiByGame.values())
+
   // Create a unified list by matching markets on normalized name
   const unifiedMarkets: UnifiedMarket[] = []
   const usedKalshiIds = new Set<string>()
@@ -787,8 +799,8 @@ function UnifiedMarketsTable({
     const normalizedName = poly.normalized_name || poly.name
     const polyKey = `${normalizedName}-${poly.game_date || ''}-${poly.sport || ''}`
     
-    // Find matching Kalshi market by normalized name and date
-    const matchingKalshi = kalshiMoneylines.find(k => {
+    // Find matching Kalshi market by normalized name and date (using deduplicated list)
+    const matchingKalshi = dedupedKalshi.find(k => {
       const kNormalized = k.normalized_name || k.name
       const kKey = `${kNormalized}-${k.game_date || ''}-${k.sport || ''}`
       return kKey === polyKey && !usedKalshiIds.has(k.id)
@@ -808,8 +820,8 @@ function UnifiedMarketsTable({
     })
   }
 
-  // Add remaining Kalshi markets that weren't matched
-  for (const kalshi of kalshiMoneylines) {
+  // Add remaining Kalshi markets that weren't matched (using deduplicated list)
+  for (const kalshi of dedupedKalshi) {
     if (!usedKalshiIds.has(kalshi.id)) {
       const normalizedName = kalshi.normalized_name || kalshi.name
       unifiedMarkets.push({
