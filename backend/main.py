@@ -992,18 +992,37 @@ async def get_all_sports_markets():
                 continue
             seen_game_dates.add(game_key)
             
+            # Calculate NO prices (complement of YES)
+            aligned_poly_no_price = 1.0 - aligned_poly_price
+            aligned_kalshi_no_price = 1.0 - aligned_kalshi_price
+            
+            # Build URLs for direct market access
+            poly_slug = pm.get("slug", "")
+            poly_url = f"https://polymarket.com/event/{poly_slug}" if poly_slug else ""
+            kalshi_ticker = km["id"]
+            kalshi_url = f"https://kalshi.com/markets/{kalshi_ticker}"
+            
             matches.append({
                 "normalized_name": pm["normalized_name"],
                 "game_date": pm["game_date"],
+                "sport": pm.get("sport"),
                 "market_for_team": market_team,  # Which team this comparison is for
+                "away_team": poly_away,
+                "home_team": poly_home,
                 "polymarket": {
                     "id": pm["id"],
+                    "name": pm["name"],  # Original market name
                     "yes_price": aligned_poly_price,  # Price for market_team to win
-                    "slug": pm.get("slug", ""),
+                    "no_price": aligned_poly_no_price,
+                    "slug": poly_slug,
+                    "url": poly_url,
                 },
                 "kalshi": {
                     "id": km["id"],
+                    "name": km["name"],  # Original market name
                     "yes_price": aligned_kalshi_price,  # Price for market_team to win
+                    "no_price": aligned_kalshi_no_price,
+                    "url": kalshi_url,
                 },
                 "price_diff_yes": price_diff,  # True arbitrage difference
             })

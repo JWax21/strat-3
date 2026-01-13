@@ -16,6 +16,9 @@ import {
   Search,
   List,
   GitCompare,
+  Eye,
+  ExternalLink,
+  DollarSign,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { clsx } from "clsx";
@@ -25,10 +28,27 @@ type TabType = "arbitrage" | "all-markets";
 interface MarketMatch {
   normalized_name: string;
   game_date: string | null;
-  polymarket: { id: string; yes_price: number; no_price: number };
-  kalshi: { id: string; yes_price: number; no_price: number };
+  sport?: string | null;
+  market_for_team?: string;
+  away_team?: string;
+  home_team?: string;
+  polymarket: {
+    id: string;
+    name?: string;
+    yes_price: number;
+    no_price: number;
+    slug?: string;
+    url?: string;
+  };
+  kalshi: {
+    id: string;
+    name?: string;
+    yes_price: number;
+    no_price: number;
+    url?: string;
+  };
   price_diff_yes: number;
-  price_diff_no: number;
+  price_diff_no?: number;
 }
 
 interface AllMarketsData {
@@ -1068,6 +1088,236 @@ function UnifiedMarketsTable({
   );
 }
 
+// Watchlist component - shows arbitrage opportunities where YES+NO < $1
+function WatchlistView({
+  matches,
+  sportColors,
+}: {
+  matches: MarketMatch[];
+  sportColors: Record<string, string>;
+}) {
+  // Calculate arbitrage opportunities
+  // Arbitrage exists when buying YES on one platform and NO on the other costs < $1
+  const opportunities = matches
+    .map((match) => {
+      const polyYes = match.polymarket.yes_price;
+      const polyNo = match.polymarket.no_price;
+      const kalshiYes = match.kalshi.yes_price;
+      const kalshiNo = match.kalshi.no_price;
+
+      // Strategy 1: Buy Poly YES + Kalshi NO (betting on away team via Poly, home team via Kalshi)
+      const cost1 = polyYes + kalshiNo;
+      const profit1 = 1.0 - cost1;
+
+      // Strategy 2: Buy Poly NO + Kalshi YES (betting on home team via Poly, away team via Kalshi)
+      const cost2 = polyNo + kalshiYes;
+      const profit2 = 1.0 - cost2;
+
+      // Choose the better strategy
+      const bestProfit = Math.max(profit1, profit2);
+      const strategy = profit1 >= profit2 ? 1 : 2;
+
+      return {
+        ...match,
+        strategy,
+        cost: strategy === 1 ? cost1 : cost2,
+        profit: bestProfit,
+        profitPercent: bestProfit * 100,
+        polyBuy: strategy === 1 ? "YES" : "NO",
+        polyPrice: strategy === 1 ? polyYes : polyNo,
+        kalshiBuy: strategy === 1 ? "NO" : "YES",
+        kalshiPrice: strategy === 1 ? kalshiNo : kalshiYes,
+      };
+    })
+    .filter((opp) => opp.profit > 0) // Only show profitable opportunities
+    .sort((a, b) => b.profit - a.profit); // Sort by profit descending
+
+  // Flag suspicious entries (>15% profit might indicate flipped sides)
+  const isSuspicious = (profitPercent: number) => profitPercent > 15;
+
+  return (
+    <div className="card-glass rounded-xl overflow-hidden">
+      <div className="p-4 border-b border-white/10 bg-yellow-500/5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Eye className="w-4 h-4 text-yellow-400" />
+            <span className="text-sm text-white/90 font-medium">
+              Arbitrage Watchlist
+            </span>
+            <span className="text-sm text-white/60">
+              ({opportunities.length} opportunities where YES + NO &lt; $1)
+            </span>
+          </div>
+          {opportunities.length > 0 && (
+            <div className="flex items-center gap-1 text-xs text-profit">
+              <DollarSign className="w-3 h-3" />
+              Best: {(opportunities[0]?.profitPercent || 0).toFixed(1)}% profit
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="max-h-[700px] overflow-y-auto">
+        {opportunities.length === 0 ? (
+          <div className="p-8 text-center text-white/40">
+            <Eye className="w-12 h-12 mx-auto mb-4 opacity-20" />
+            <p className="mb-2">No arbitrage opportunities found</p>
+            <p className="text-xs">
+              Opportunities appear when buying YES on one platform and NO on the
+              other costs less than $1
+            </p>
+          </div>
+        ) : (
+          <div className="divide-y divide-white/5">
+            {opportunities.map((opp, i) => (
+              <div
+                key={i}
+                className={clsx(
+                  "p-4 hover:bg-white/5 transition",
+                  isSuspicious(opp.profitPercent) && "bg-red-500/5 border-l-2 border-red-500"
+                )}
+              >
+                {/* Header row */}
+                <div className="flex items-start justify-between mb-3">
+                  <div>
+                    <div className="flex items-center gap-2 mb-1">
+                      {opp.sport && (
+                        <span
+                          className={clsx(
+                            "px-2 py-0.5 rounded text-[10px] font-medium uppercase border",
+                            sportColors[opp.sport] ||
+                              "bg-white/10 text-white/60 border-white/20"
+                          )}
+                        >
+                          {opp.sport}
+                        </span>
+                      )}
+                      <span className="text-white/90 font-medium">
+                        {opp.normalized_name}
+                      </span>
+                    </div>
+                    <div className="text-xs text-white/50">
+                      {opp.game_date || "—"}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div
+                      className={clsx(
+                        "text-lg font-bold font-mono",
+                        isSuspicious(opp.profitPercent)
+                          ? "text-red-400"
+                          : "text-profit"
+                      )}
+                    >
+                      +{opp.profitPercent.toFixed(1)}%
+                    </div>
+                    <div className="text-xs text-white/50">
+                      Cost: {(opp.cost * 100).toFixed(0)}¢
+                    </div>
+                  </div>
+                </div>
+
+                {/* Strategy display */}
+                <div className="grid grid-cols-2 gap-4 mb-3">
+                  {/* Polymarket side */}
+                  <div className="bg-electric-cyan/5 rounded-lg p-3 border border-electric-cyan/20">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs text-electric-cyan font-medium uppercase">
+                        Polymarket
+                      </span>
+                      <span
+                        className={clsx(
+                          "px-2 py-0.5 rounded text-xs font-bold",
+                          opp.polyBuy === "YES"
+                            ? "bg-profit/20 text-profit"
+                            : "bg-loss/20 text-loss"
+                        )}
+                      >
+                        BUY {opp.polyBuy}
+                      </span>
+                    </div>
+                    <div className="text-2xl font-mono font-bold text-white mb-1">
+                      {(opp.polyPrice * 100).toFixed(0)}¢
+                    </div>
+                  </div>
+
+                  {/* Kalshi side */}
+                  <div className="bg-electric-purple/5 rounded-lg p-3 border border-electric-purple/20">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs text-electric-purple font-medium uppercase">
+                        Kalshi
+                      </span>
+                      <span
+                        className={clsx(
+                          "px-2 py-0.5 rounded text-xs font-bold",
+                          opp.kalshiBuy === "YES"
+                            ? "bg-profit/20 text-profit"
+                            : "bg-loss/20 text-loss"
+                        )}
+                      >
+                        BUY {opp.kalshiBuy}
+                      </span>
+                    </div>
+                    <div className="text-2xl font-mono font-bold text-white mb-1">
+                      {(opp.kalshiPrice * 100).toFixed(0)}¢
+                    </div>
+                  </div>
+                </div>
+
+                {/* Market links */}
+                <div className="text-xs text-white/40 space-y-1">
+                  <div className="flex items-center gap-1">
+                    <span className="text-white/30">Polymarket:</span>
+                    {opp.polymarket.url ? (
+                      <a
+                        href={opp.polymarket.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-electric-cyan/60 hover:text-electric-cyan flex items-center gap-1 truncate"
+                      >
+                        {opp.polymarket.name || opp.polymarket.slug || opp.polymarket.id}
+                        <ExternalLink className="w-3 h-3 flex-shrink-0" />
+                      </a>
+                    ) : (
+                      <span>{opp.polymarket.name || opp.polymarket.id}</span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-white/30">Kalshi:</span>
+                    {opp.kalshi.url ? (
+                      <a
+                        href={opp.kalshi.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-electric-purple/60 hover:text-electric-purple flex items-center gap-1 truncate"
+                      >
+                        {opp.kalshi.name || opp.kalshi.id}
+                        <ExternalLink className="w-3 h-3 flex-shrink-0" />
+                      </a>
+                    ) : (
+                      <span>{opp.kalshi.name || opp.kalshi.id}</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Warning for suspicious entries */}
+                {isSuspicious(opp.profitPercent) && (
+                  <div className="mt-3 flex items-center gap-2 text-xs text-red-400 bg-red-500/10 rounded p-2">
+                    <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+                    <span>
+                      High spread detected - verify sides are correct before trading
+                    </span>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function AllMarketsTab({
   data,
   loading,
@@ -1080,7 +1330,7 @@ function AllMarketsTab({
   refreshing: boolean;
 }) {
   const [marketType, setMarketType] = useState<
-    "single_game" | "futures" | "matches"
+    "single_game" | "futures" | "matches" | "watchlist"
   >("single_game");
   const [betType, setBetType] = useState<
     "moneyline" | "spread" | "over_under" | "props" | "all"
@@ -1221,6 +1471,18 @@ function AllMarketsTab({
       <div className="flex flex-wrap items-center gap-4 mb-6">
         <div className="flex items-center rounded-lg bg-midnight-800 border border-white/10 p-1">
           <button
+            onClick={() => setMarketType("watchlist")}
+            className={clsx(
+              "px-3 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-1.5",
+              marketType === "watchlist"
+                ? "bg-yellow-500/20 text-yellow-400"
+                : "text-white/50 hover:text-white/70"
+            )}
+          >
+            <Eye className="w-3.5 h-3.5" />
+            Watchlist
+          </button>
+          <button
             onClick={() => setMarketType("single_game")}
             className={clsx(
               "px-3 py-1.5 rounded-md text-sm font-medium transition-all",
@@ -1336,6 +1598,11 @@ function AllMarketsTab({
             </button>
           ))}
         </div>
+      )}
+
+      {/* Watchlist View - Arbitrage Opportunities */}
+      {marketType === "watchlist" && (
+        <WatchlistView matches={matches} sportColors={sportColors} />
       )}
 
       {/* Matches View */}
