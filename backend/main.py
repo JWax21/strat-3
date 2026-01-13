@@ -930,6 +930,9 @@ async def get_all_sports_markets():
             normalized_yes_price = raw_yes_price
             normalized_no_price = raw_no_price
         
+        # Debug: track whether swap happened
+        did_swap = kalshi_yes_team and home_team and kalshi_yes_team == home_team
+        
         kalshi_formatted.append({
             "id": ticker,
             "name": question,
@@ -941,6 +944,12 @@ async def get_all_sports_markets():
             "series": m.get("series_ticker", ""),
             "yes_price": normalized_yes_price,  # Normalized: Away team wins
             "no_price": normalized_no_price,    # Normalized: Home team wins
+            # Debug fields
+            "_debug_kalshi_yes_abbrev": kalshi_yes_team_abbrev,
+            "_debug_kalshi_yes_team": kalshi_yes_team,
+            "_debug_did_swap": did_swap,
+            "_debug_raw_yes": raw_yes_price,
+            "_debug_raw_no": raw_no_price,
             "category": category,
             "market_type": market_type.value,
             "expiration": m.get("expected_expiration_time"),
