@@ -872,6 +872,19 @@ async def get_all_sports_markets():
             logger.debug(f"  outcome_to_price={outcome_to_price}")
             logger.debug(f"  away={away_team} -> {away_team_price}, home={home_team} -> {home_team_price}")
         
+        # CRITICAL DEBUG: Print raw API data for single games
+        if away_team and home_team and ("wiz" in slug.lower() or "was" in slug.lower() or "lac" in slug.lower()):
+            print(f"\n{'='*60}")
+            print(f"POLYMARKET RAW DATA FOR: {slug}")
+            print(f"{'='*60}")
+            for key, val in m.items():
+                print(f"  {key}: {val}")
+            print(f"{'='*60}")
+            print(f"PARSED: away={away_team}, home={home_team}")
+            print(f"PARSED: outcomes={outcomes}, prices={outcome_prices}")
+            print(f"FINAL: away_team_price={away_team_price}, home_team_price={home_team_price}")
+            print(f"{'='*60}\n")
+        
         poly_formatted.append({
             "id": m.get("id"),
             "name": question,
@@ -885,6 +898,7 @@ async def get_all_sports_markets():
             "no_price": home_team_price,   # NO = home team wins
             "outcomes": outcomes,  # Include for debugging
             "outcome_prices": outcome_prices,  # Include for debugging
+            "_raw_api_data": m,  # Include full raw data for debugging
             "category": category,
             "market_type": market_type.value,
             "end_date": m.get("end_date"),
