@@ -834,6 +834,46 @@ async def get_all_sports_markets():
         # Detect market type
         market_type = matcher.detect_market_type(question, "", slug)
         
+        # CRITICAL: Match Polymarket outcomes to teams by name, not index!
+        # outcomes = ["Knicks", "Kings"], outcome_prices = [0.79, 0.23]
+        # We need to find which outcome corresponds to away_team vs home_team
+        outcomes = m.get("outcomes", [])
+        outcome_prices = m.get("outcome_prices", [])
+        
+        # Default to raw yes/no prices (index-based)
+        away_team_price = m.get("yes_price", 0)
+        home_team_price = m.get("no_price", 0)
+        
+        # Try to match outcome names to team names
+        if outcomes and outcome_prices and away_team and home_team and len(outcomes) >= 2 and len(outcome_prices) >= 2:
+            away_lower = away_team.lower()
+            home_lower = home_team.lower()
+            
+            # Find which outcome index matches which team
+            away_idx = None
+            home_idx = None
+            
+            for idx, outcome in enumerate(outcomes):
+                outcome_lower = outcome.lower() if outcome else ""
+                # Check if outcome contains team name or vice versa
+                # e.g., "Knicks" matches "New York Knicks", "knicks" matches "Knicks"
+                if any(word in outcome_lower for word in away_lower.split()) or \
+                   any(word in away_lower for word in outcome_lower.split() if len(word) > 2):
+                    away_idx = idx
+                elif any(word in outcome_lower for word in home_lower.split()) or \
+                     any(word in home_lower for word in outcome_lower.split() if len(word) > 2):
+                    home_idx = idx
+            
+            # If we found matches, use the correct prices
+            if away_idx is not None and away_idx < len(outcome_prices):
+                away_team_price = outcome_prices[away_idx]
+            if home_idx is not None and home_idx < len(outcome_prices):
+                home_team_price = outcome_prices[home_idx]
+            
+            # Log for debugging
+            logger.debug(f"Polymarket {slug}: outcomes={outcomes}, prices={outcome_prices}")
+            logger.debug(f"  away={away_team}(idx={away_idx}, price={away_team_price}), home={home_team}(idx={home_idx}, price={home_team_price})")
+        
         poly_formatted.append({
             "id": m.get("id"),
             "name": question,
@@ -843,8 +883,10 @@ async def get_all_sports_markets():
             "game_date": game_date,
             "sport": sport.value if sport else None,
             "slug": slug,
-            "yes_price": m.get("yes_price", 0),
-            "no_price": m.get("no_price", 0),
+            "yes_price": away_team_price,  # YES = away team wins
+            "no_price": home_team_price,   # NO = home team wins
+            "outcomes": outcomes,  # Include for debugging
+            "outcome_prices": outcome_prices,  # Include for debugging
             "category": category,
             "market_type": market_type.value,
             "end_date": m.get("end_date"),
