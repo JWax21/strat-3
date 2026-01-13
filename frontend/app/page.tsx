@@ -1174,7 +1174,8 @@ function WatchlistView({
                 key={i}
                 className={clsx(
                   "p-4 hover:bg-white/5 transition",
-                  isSuspicious(opp.profitPercent) && "bg-red-500/5 border-l-2 border-red-500"
+                  isSuspicious(opp.profitPercent) &&
+                    "bg-red-500/5 border-l-2 border-red-500"
                 )}
               >
                 {/* Header row */}
@@ -1275,7 +1276,9 @@ function WatchlistView({
                         rel="noopener noreferrer"
                         className="text-electric-cyan/60 hover:text-electric-cyan flex items-center gap-1 truncate"
                       >
-                        {opp.polymarket.name || opp.polymarket.slug || opp.polymarket.id}
+                        {opp.polymarket.name ||
+                          opp.polymarket.slug ||
+                          opp.polymarket.id}
                         <ExternalLink className="w-3 h-3 flex-shrink-0" />
                       </a>
                     ) : (
@@ -1305,7 +1308,8 @@ function WatchlistView({
                   <div className="mt-3 flex items-center gap-2 text-xs text-red-400 bg-red-500/10 rounded p-2">
                     <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
                     <span>
-                      High spread detected - verify sides are correct before trading
+                      High spread detected - verify sides are correct before
+                      trading
                     </span>
                   </div>
                 )}
