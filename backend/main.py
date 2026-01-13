@@ -954,15 +954,19 @@ async def get_all_sports_markets():
         })
     
     # Group by market type for easier viewing
-    # Polymarket: identify single-game markets by slug pattern (nba-xxx-xxx-YYYY-MM-DD)
+    # Polymarket: identify single-game MONEYLINE markets by slug pattern AND market_type
+    # IMPORTANT: Only include game_winner (moneyline) markets - exclude spread and O/U
     single_game_slugs = ['nba-', 'nfl-', 'nhl-', 'mlb-', 'cbb-', 'cfb-', 'wnba-', 'cwbb-', 'ufc-']
     poly_single_game = [m for m in poly_formatted 
                         if any(m.get("slug", "").lower().startswith(prefix) for prefix in single_game_slugs)
-                        and m.get("away_team") and m.get("home_team")]
+                        and m.get("away_team") and m.get("home_team")
+                        and m.get("market_type") == "game_winner"]  # ONLY moneyline!
     poly_futures = [m for m in poly_formatted if m not in poly_single_game]
     
-    # Kalshi: identify by category or series ticker
-    kalshi_single_game = [m for m in kalshi_formatted if "single_game" in m.get("category", "")]
+    # Kalshi: identify by category or series ticker - also filter to game_winner only
+    kalshi_single_game = [m for m in kalshi_formatted 
+                          if "single_game" in m.get("category", "")
+                          and m.get("market_type") == "game_winner"]  # ONLY moneyline!
     kalshi_futures = [m for m in kalshi_formatted if m.get("category", "") == "futures"]
     
     # Find potential matches (same normalized name and date)
