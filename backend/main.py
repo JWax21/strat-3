@@ -548,6 +548,20 @@ async def refresh_sports_data(background_tasks: BackgroundTasks):
     }
 
 
+@app.post("/api/sports/reset")
+async def reset_sports_state():
+    """
+    Force reset the sports data state. Use this if is_fetching gets stuck.
+    """
+    was_fetching = state.is_fetching
+    state.is_fetching = False
+    return {
+        "status": "reset",
+        "was_fetching": was_fetching,
+        "message": "State has been reset. You can now trigger a new refresh."
+    }
+
+
 async def fetch_and_analyze_sports():
     """
     Background task to fetch and analyze sports markets.
