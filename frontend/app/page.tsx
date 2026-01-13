@@ -738,6 +738,7 @@ function AllMarketsTab({
 }) {
   const [marketType, setMarketType] = useState<'single_game' | 'futures' | 'matches'>('single_game')
   const [searchQuery, setSearchQuery] = useState('')
+  const [selectedSport, setSelectedSport] = useState<string | null>(null)
 
   // Use normalized_name from API if available, otherwise truncate original name
   const getDisplayName = (market: MarketItem): string => {
@@ -761,17 +762,42 @@ function AllMarketsTab({
   const kalshiMarkets = marketType !== 'matches' ? (data?.kalshi[marketType as 'single_game' | 'futures']?.markets || []) : []
   const matches = data?.matches?.markets || []
 
-  // Filter by search
-  const filteredPoly = polyMarkets.filter(m => 
-    !searchQuery || 
-    m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    (m.normalized_name && m.normalized_name.toLowerCase().includes(searchQuery.toLowerCase()))
-  )
-  const filteredKalshi = kalshiMarkets.filter(m => 
-    !searchQuery || 
-    m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    (m.normalized_name && m.normalized_name.toLowerCase().includes(searchQuery.toLowerCase()))
-  )
+  // Extract unique sports from both platforms
+  const allSports = new Set<string>()
+  polyMarkets.forEach(m => m.sport && allSports.add(m.sport.toLowerCase()))
+  kalshiMarkets.forEach(m => m.sport && allSports.add(m.sport.toLowerCase()))
+  const sportsList = Array.from(allSports).sort()
+
+  // Sport colors for badges
+  const sportColors: Record<string, string> = {
+    nba: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
+    nfl: 'bg-green-500/20 text-green-400 border-green-500/30',
+    nhl: 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30',
+    mlb: 'bg-red-500/20 text-red-400 border-red-500/30',
+    ncaa_mbb: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
+    ncaa_wbb: 'bg-pink-500/20 text-pink-400 border-pink-500/30',
+    ufc: 'bg-red-600/20 text-red-500 border-red-600/30',
+    tennis: 'bg-lime-500/20 text-lime-400 border-lime-500/30',
+    golf: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
+    f1: 'bg-red-500/20 text-red-400 border-red-500/30',
+    nascar: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
+  }
+
+  // Filter by search AND sport
+  const filteredPoly = polyMarkets.filter(m => {
+    const matchesSearch = !searchQuery || 
+      m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (m.normalized_name && m.normalized_name.toLowerCase().includes(searchQuery.toLowerCase()))
+    const matchesSport = !selectedSport || m.sport?.toLowerCase() === selectedSport
+    return matchesSearch && matchesSport
+  })
+  const filteredKalshi = kalshiMarkets.filter(m => {
+    const matchesSearch = !searchQuery || 
+      m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (m.normalized_name && m.normalized_name.toLowerCase().includes(searchQuery.toLowerCase()))
+    const matchesSport = !selectedSport || m.sport?.toLowerCase() === selectedSport
+    return matchesSearch && matchesSport
+  })
   const filteredMatches = matches.filter(m =>
     !searchQuery || m.normalized_name.toLowerCase().includes(searchQuery.toLowerCase())
   )
@@ -874,6 +900,43 @@ function AllMarketsTab({
           />
         </div>
       </div>
+
+      {/* Sport Filter */}
+      {marketType !== 'matches' && sportsList.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 mb-6">
+          <span className="text-xs text-white/40 uppercase tracking-wider mr-2">Sport:</span>
+          <button
+            onClick={() => setSelectedSport(null)}
+            className={clsx(
+              "px-3 py-1 rounded-full text-xs font-medium transition-all border",
+              selectedSport === null
+                ? "bg-white/10 text-white border-white/30"
+                : "bg-transparent text-white/50 border-white/10 hover:border-white/20"
+            )}
+          >
+            All
+          </button>
+          {sportsList.map(sport => (
+            <button
+              key={sport}
+              onClick={() => setSelectedSport(selectedSport === sport ? null : sport)}
+              className={clsx(
+                "px-3 py-1 rounded-full text-xs font-medium transition-all border",
+                selectedSport === sport
+                  ? sportColors[sport] || "bg-white/10 text-white border-white/30"
+                  : "bg-transparent text-white/50 border-white/10 hover:border-white/20"
+              )}
+            >
+              {sport.toUpperCase()}
+            </button>
+          ))}
+          {selectedSport && (
+            <span className="text-xs text-white/40 ml-2">
+              ({filteredPoly.length} Poly / {filteredKalshi.length} Kalshi)
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Matches View */}
       {marketType === 'matches' && (
