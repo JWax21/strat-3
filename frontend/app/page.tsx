@@ -743,17 +743,52 @@ function UnifiedMarketsTable({
   kalshiMarkets: MarketItem[]
   sportColors: Record<string, string>
 }) {
+  // Helper to check if a market is a moneyline/game winner (not spread/total/props)
+  const isMoneyline = (market: MarketItem): boolean => {
+    const name = (market.name || '').toLowerCase()
+    const slug = (market.slug || '').toLowerCase()
+    
+    // Exclude spreads, totals, and player props
+    const excludePatterns = [
+      'spread', 'o/u', 'over', 'under', 'total', 
+      'points', 'pts', 'rebounds', 'assists', 'anytime',
+      'touchdown', 'scorer', 'player'
+    ]
+    
+    for (const pattern of excludePatterns) {
+      if (name.includes(pattern) || slug.includes(pattern)) {
+        return false
+      }
+    }
+    return true
+  }
+
+  // Filter to only moneyline markets
+  const polyMoneylines = polyMarkets.filter(isMoneyline)
+  const kalshiMoneylines = kalshiMarkets.filter(isMoneyline)
+
+  // Deduplicate Polymarket markets by normalized_name + game_date
+  const polyByGame = new Map<string, MarketItem>()
+  for (const poly of polyMoneylines) {
+    const key = `${poly.normalized_name || poly.name}-${poly.game_date || ''}-${poly.sport || ''}`
+    // Keep the first one (or could keep by highest volume)
+    if (!polyByGame.has(key)) {
+      polyByGame.set(key, poly)
+    }
+  }
+  const dedupedPoly = Array.from(polyByGame.values())
+
   // Create a unified list by matching markets on normalized name
   const unifiedMarkets: UnifiedMarket[] = []
   const usedKalshiIds = new Set<string>()
 
   // First, add all Polymarket markets and try to find matching Kalshi markets
-  for (const poly of polyMarkets) {
+  for (const poly of dedupedPoly) {
     const normalizedName = poly.normalized_name || poly.name
     const polyKey = `${normalizedName}-${poly.game_date || ''}-${poly.sport || ''}`
     
     // Find matching Kalshi market by normalized name and date
-    const matchingKalshi = kalshiMarkets.find(k => {
+    const matchingKalshi = kalshiMoneylines.find(k => {
       const kNormalized = k.normalized_name || k.name
       const kKey = `${kNormalized}-${k.game_date || ''}-${k.sport || ''}`
       return kKey === polyKey && !usedKalshiIds.has(k.id)
@@ -774,7 +809,7 @@ function UnifiedMarketsTable({
   }
 
   // Add remaining Kalshi markets that weren't matched
-  for (const kalshi of kalshiMarkets) {
+  for (const kalshi of kalshiMoneylines) {
     if (!usedKalshiIds.has(kalshi.id)) {
       const normalizedName = kalshi.normalized_name || kalshi.name
       unifiedMarkets.push({
