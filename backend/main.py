@@ -851,6 +851,8 @@ async def get_all_sports_markets():
         })
     
     # Format Kalshi markets with normalized names and market type
+    # IMPORTANT: Normalize prices so yes_price = Away team wins, no_price = Home team wins
+    # This makes them comparable to Polymarket where YES = away team wins
     kalshi_formatted = []
     for m in kalshi_markets:
         category = m.get("category", "")
@@ -864,6 +866,30 @@ async def get_all_sports_markets():
         # Detect market type
         market_type = matcher.detect_market_type(question, ticker, "")
         
+        # Get raw prices from Kalshi
+        raw_yes_price = m.get("yes_price", 0)
+        raw_no_price = m.get("no_price", 0)
+        
+        # Normalize prices so yes_price = away team wins, no_price = home team wins
+        # Kalshi ticker format: KXNBAGAME-26JAN12CHALAC-LAC (last part is which team YES refers to)
+        # Parse which team Kalshi's YES refers to
+        ticker_parts = ticker.split("-")
+        kalshi_yes_team_abbrev = ticker_parts[-1].lower() if len(ticker_parts) > 2 else ""
+        
+        # Normalize the abbreviation to canonical team name
+        kalshi_yes_team = normalizer.normalize_team(kalshi_yes_team_abbrev, sport) if sport else None
+        
+        # Determine if we need to swap prices
+        # If Kalshi YES = home team, swap so yes_price becomes away team price
+        if kalshi_yes_team and home_team and kalshi_yes_team == home_team:
+            # YES was for home team, swap to make yes_price = away team
+            normalized_yes_price = raw_no_price   # Away team wins = Kalshi NO
+            normalized_no_price = raw_yes_price   # Home team wins = Kalshi YES
+        else:
+            # YES was for away team or couldn't determine - keep as-is
+            normalized_yes_price = raw_yes_price
+            normalized_no_price = raw_no_price
+        
         kalshi_formatted.append({
             "id": ticker,
             "name": question,
@@ -873,8 +899,8 @@ async def get_all_sports_markets():
             "game_date": game_date,
             "sport": sport.value if sport else None,
             "series": m.get("series_ticker", ""),
-            "yes_price": m.get("yes_price", 0),
-            "no_price": m.get("no_price", 0),
+            "yes_price": normalized_yes_price,  # Normalized: Away team wins
+            "no_price": normalized_no_price,    # Normalized: Home team wins
             "category": category,
             "market_type": market_type.value,
             "expiration": m.get("expected_expiration_time"),

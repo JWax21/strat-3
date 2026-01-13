@@ -1390,7 +1390,9 @@ function AllMarketsTab({
                       <td className="p-3 text-right">
                         <span className="font-mono text-electric-cyan font-medium">
                           {match.polymarket?.yes_price != null
-                            ? `${(match.polymarket.yes_price * 100).toFixed(0)}¢`
+                            ? `${(match.polymarket.yes_price * 100).toFixed(
+                                0
+                              )}¢`
                             : "—"}
                         </span>
                       </td>
