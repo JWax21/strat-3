@@ -1089,6 +1089,53 @@ function UnifiedMarketsTable({
 }
 
 // Watchlist component - shows arbitrage opportunities where YES+NO < $1
+// Helper to extract team abbreviation from full name
+function getTeamAbbrev(teamName?: string | null): string {
+  if (!teamName) return "???";
+  
+  // Common abbreviation mappings
+  const abbrevMap: Record<string, string> = {
+    // NBA
+    "atlanta hawks": "ATL", "boston celtics": "BOS", "brooklyn nets": "BKN",
+    "charlotte hornets": "CHA", "chicago bulls": "CHI", "cleveland cavaliers": "CLE",
+    "dallas mavericks": "DAL", "denver nuggets": "DEN", "detroit pistons": "DET",
+    "golden state warriors": "GSW", "houston rockets": "HOU", "indiana pacers": "IND",
+    "la clippers": "LAC", "los angeles clippers": "LAC", "los angeles lakers": "LAL",
+    "la lakers": "LAL", "memphis grizzlies": "MEM", "miami heat": "MIA",
+    "milwaukee bucks": "MIL", "minnesota timberwolves": "MIN", "new orleans pelicans": "NOP",
+    "new york knicks": "NYK", "oklahoma city thunder": "OKC", "orlando magic": "ORL",
+    "philadelphia 76ers": "PHI", "phoenix suns": "PHX", "portland trail blazers": "POR",
+    "sacramento kings": "SAC", "san antonio spurs": "SAS", "toronto raptors": "TOR",
+    "utah jazz": "UTA", "washington wizards": "WAS",
+    // NHL
+    "vancouver canucks": "VAN", "ottawa senators": "OTT", "new york rangers": "NYR",
+    "calgary flames": "CGY", "edmonton oilers": "EDM", "winnipeg jets": "WPG",
+    "montreal canadiens": "MTL", "toronto maple leafs": "TOR", "boston bruins": "BOS",
+    "buffalo sabres": "BUF", "detroit red wings": "DET", "florida panthers": "FLA",
+    "tampa bay lightning": "TBL", "carolina hurricanes": "CAR", "washington capitals": "WSH",
+    "pittsburgh penguins": "PIT", "philadelphia flyers": "PHI", "new jersey devils": "NJD",
+    "new york islanders": "NYI", "columbus blue jackets": "CBJ", "chicago blackhawks": "CHI",
+    "st. louis blues": "STL", "nashville predators": "NSH", "dallas stars": "DAL",
+    "colorado avalanche": "COL", "minnesota wild": "MIN", "arizona coyotes": "ARI",
+    "vegas golden knights": "VGK", "los angeles kings": "LAK", "san jose sharks": "SJS",
+    "anaheim ducks": "ANA", "seattle kraken": "SEA",
+    // NFL
+    "houston texans": "HOU", "kansas city chiefs": "KC", "buffalo bills": "BUF",
+    "baltimore ravens": "BAL", "detroit lions": "DET", "philadelphia eagles": "PHI",
+    "minnesota vikings": "MIN", "green bay packers": "GB", "washington commanders": "WAS",
+    "tampa bay buccaneers": "TB", "los angeles rams": "LAR", "denver broncos": "DEN",
+    "pittsburgh steelers": "PIT", "los angeles chargers": "LAC",
+  };
+  
+  const lower = teamName.toLowerCase();
+  if (abbrevMap[lower]) return abbrevMap[lower];
+  
+  // Fallback: take first 3 letters of last word
+  const words = teamName.split(" ");
+  const lastWord = words[words.length - 1];
+  return lastWord.substring(0, 3).toUpperCase();
+}
+
 function WatchlistView({
   matches,
   sportColors,
@@ -1117,16 +1164,26 @@ function WatchlistView({
       const bestProfit = Math.max(profit1, profit2);
       const strategy = profit1 >= profit2 ? 1 : 2;
 
+      // Get team abbreviations (YES = away team, NO = home team)
+      const awayAbbrev = getTeamAbbrev(match.away_team);
+      const homeAbbrev = getTeamAbbrev(match.home_team);
+
       return {
         ...match,
         strategy,
         cost: strategy === 1 ? cost1 : cost2,
         profit: bestProfit,
         profitPercent: bestProfit * 100,
-        polyBuy: strategy === 1 ? "YES" : "NO",
+        // Strategy 1: Poly YES (away) + Kalshi NO (home)
+        // Strategy 2: Poly NO (home) + Kalshi YES (away)
+        polyBuyTeam: strategy === 1 ? awayAbbrev : homeAbbrev,
+        polyBuySide: strategy === 1 ? "YES" : "NO",
         polyPrice: strategy === 1 ? polyYes : polyNo,
-        kalshiBuy: strategy === 1 ? "NO" : "YES",
+        kalshiBuyTeam: strategy === 1 ? homeAbbrev : awayAbbrev,
+        kalshiBuySide: strategy === 1 ? "NO" : "YES",
         kalshiPrice: strategy === 1 ? kalshiNo : kalshiYes,
+        awayAbbrev,
+        homeAbbrev,
       };
     })
     .filter((opp) => opp.profit > 0) // Only show profitable opportunities
@@ -1226,19 +1283,15 @@ function WatchlistView({
                       <span className="text-xs text-electric-cyan font-medium uppercase">
                         Polymarket
                       </span>
-                      <span
-                        className={clsx(
-                          "px-2 py-0.5 rounded text-xs font-bold",
-                          opp.polyBuy === "YES"
-                            ? "bg-profit/20 text-profit"
-                            : "bg-loss/20 text-loss"
-                        )}
-                      >
-                        BUY {opp.polyBuy}
+                      <span className="px-2 py-0.5 rounded text-xs font-bold bg-electric-cyan/20 text-electric-cyan">
+                        BUY {opp.polyBuyTeam}
                       </span>
                     </div>
                     <div className="text-2xl font-mono font-bold text-white mb-1">
                       {(opp.polyPrice * 100).toFixed(0)}¢
+                    </div>
+                    <div className="text-[10px] text-white/40">
+                      ({opp.polyBuySide} = {opp.polyBuyTeam} wins)
                     </div>
                   </div>
 
@@ -1248,19 +1301,15 @@ function WatchlistView({
                       <span className="text-xs text-electric-purple font-medium uppercase">
                         Kalshi
                       </span>
-                      <span
-                        className={clsx(
-                          "px-2 py-0.5 rounded text-xs font-bold",
-                          opp.kalshiBuy === "YES"
-                            ? "bg-profit/20 text-profit"
-                            : "bg-loss/20 text-loss"
-                        )}
-                      >
-                        BUY {opp.kalshiBuy}
+                      <span className="px-2 py-0.5 rounded text-xs font-bold bg-electric-purple/20 text-electric-purple">
+                        BUY {opp.kalshiBuyTeam}
                       </span>
                     </div>
                     <div className="text-2xl font-mono font-bold text-white mb-1">
                       {(opp.kalshiPrice * 100).toFixed(0)}¢
+                    </div>
+                    <div className="text-[10px] text-white/40">
+                      ({opp.kalshiBuySide} = {opp.kalshiBuyTeam} wins)
                     </div>
                   </div>
                 </div>
