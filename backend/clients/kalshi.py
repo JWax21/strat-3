@@ -427,6 +427,32 @@ class KalshiClient:
     ]
     
     # =========================================================================
+    # PLAYER PROPS - Player performance markets
+    # =========================================================================
+    PLAYER_PROPS_SERIES = [
+        # NBA Props
+        "KXNBAPTS",        # NBA Player Points
+        "KXNBAREBS",       # NBA Player Rebounds
+        "KXNBAASTS",       # NBA Player Assists
+        "KXNBA3S",         # NBA Player 3-Pointers
+        
+        # NFL Props
+        "KXNFLTD",         # NFL Touchdowns
+        "KXNFLPASS",       # NFL Passing Yards
+        "KXNFLRUSH",       # NFL Rushing Yards
+        "KXNFLREC",        # NFL Receiving Yards
+        
+        # NHL Props
+        "KXNHLPTS",        # NHL Player Points
+        "KXNHLGOALS",      # NHL Player Goals
+        
+        # MLB Props
+        "KXMLBHITS",       # MLB Player Hits
+        "KXMLBHR",         # MLB Home Runs
+        "KXMLBRBI",        # MLB RBIs
+    ]
+    
+    # =========================================================================
     # FUTURES/AWARDS MARKETS - Championship and season-long markets
     # =========================================================================
     SPORTS_FUTURES_SERIES = [
@@ -494,13 +520,17 @@ class KalshiClient:
         all_series = []
         if include_single_games:
             all_series.extend(self.SINGLE_GAME_SERIES)
+            all_series.extend(self.PLAYER_PROPS_SERIES)  # Include props with single games
         all_series.extend(self.SPORTS_FUTURES_SERIES)
         
         logger.info(f"Fetching sports markets from {len(all_series)} Kalshi series (games within {max_expiration_hours}h)...")
         
+        props_count = 0
+        
         for series_ticker in all_series:
             try:
                 is_single_game = series_ticker in self.SINGLE_GAME_SERIES
+                is_player_props = series_ticker in self.PLAYER_PROPS_SERIES
                 
                 # Fetch markets for this series
                 # Note: We fetch all open markets, then filter client-side by expected_expiration_time
@@ -518,8 +548,8 @@ class KalshiClient:
                             market.series_ticker = series_ticker
                         
                         # Tag the market type and apply date filtering
-                        if is_single_game:
-                            # Filter single-game markets by expected_expiration_time
+                        if is_single_game or is_player_props:
+                            # Filter single-game and props markets by expected_expiration_time
                             if market.expected_expiration_time:
                                 # Ensure timezone-aware comparison
                                 exp_time = market.expected_expiration_time
@@ -533,8 +563,15 @@ class KalshiClient:
                                 if exp_time < now:
                                     continue
                             
-                            market.category = f"single_game_{series_ticker.replace('KX', '').replace('GAME', '').lower()}"
-                            single_game_count += 1
+                            # Categorize based on market type
+                            if is_player_props:
+                                # Extract sport from series ticker (e.g., KXNBAPTS -> nba)
+                                sport = series_ticker.replace('KX', '').replace('PTS', '').replace('REBS', '').replace('ASTS', '').replace('3S', '').replace('TD', '').replace('PASS', '').replace('RUSH', '').replace('REC', '').replace('GOALS', '').replace('HITS', '').replace('HR', '').replace('RBI', '').lower()
+                                market.category = f"props_{sport}"
+                                props_count += 1
+                            else:
+                                market.category = f"single_game_{series_ticker.replace('KX', '').replace('GAME', '').lower()}"
+                                single_game_count += 1
                         else:
                             market.category = "futures"
                             futures_count += 1
@@ -551,7 +588,7 @@ class KalshiClient:
                 logger.warning(f"Failed to fetch series {series_ticker}: {e}")
                 continue
         
-        logger.info(f"Kalshi sports: {single_game_count} single-game, {futures_count} futures = {len(all_markets)} total")
+        logger.info(f"Kalshi sports: {single_game_count} single-game, {props_count} props, {futures_count} futures = {len(all_markets)} total")
         return all_markets
     
     async def get_all_open_markets(self, max_markets: int = 500) -> List[KalshiMarket]:
