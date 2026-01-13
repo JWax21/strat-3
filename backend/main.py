@@ -872,19 +872,6 @@ async def get_all_sports_markets():
             logger.debug(f"  outcome_to_price={outcome_to_price}")
             logger.debug(f"  away={away_team} -> {away_team_price}, home={home_team} -> {home_team_price}")
         
-        # CRITICAL DEBUG: Print raw API data for single games
-        if away_team and home_team and ("wiz" in slug.lower() or "was" in slug.lower() or "lac" in slug.lower()):
-            print(f"\n{'='*60}")
-            print(f"POLYMARKET RAW DATA FOR: {slug}")
-            print(f"{'='*60}")
-            for key, val in m.items():
-                print(f"  {key}: {val}")
-            print(f"{'='*60}")
-            print(f"PARSED: away={away_team}, home={home_team}")
-            print(f"PARSED: outcomes={outcomes}, prices={outcome_prices}")
-            print(f"FINAL: away_team_price={away_team_price}, home_team_price={home_team_price}")
-            print(f"{'='*60}\n")
-        
         poly_formatted.append({
             "id": m.get("id"),
             "name": question,
@@ -896,9 +883,6 @@ async def get_all_sports_markets():
             "slug": slug,
             "yes_price": away_team_price,  # YES = away team wins
             "no_price": home_team_price,   # NO = home team wins
-            "outcomes": outcomes,  # Include for debugging
-            "outcome_prices": outcome_prices,  # Include for debugging
-            "_raw_api_data": m,  # Include full raw data for debugging
             "category": category,
             "market_type": market_type.value,
             "end_date": m.get("end_date"),
@@ -1050,7 +1034,8 @@ async def get_all_sports_markets():
             price_diff = abs(aligned_poly_price - aligned_kalshi_price) * 100
             
             # Create unique key to avoid duplicate matches
-            game_key = f"{pm['game_date']}_{poly_away}_{poly_home}_{market_team}"
+            # Only ONE match per game (don't duplicate for WAS vs LAC markets)
+            game_key = f"{pm['game_date']}_{poly_away}_{poly_home}"
             if game_key in seen_game_dates:
                 continue
             seen_game_dates.add(game_key)
@@ -1065,6 +1050,21 @@ async def get_all_sports_markets():
             kalshi_ticker = km["id"]
             kalshi_url = f"https://kalshi.com/markets/{kalshi_ticker}"
             
+            # CRITICAL: Always return CONSISTENT pricing
+            # yes_price = away team wins (poly_away)
+            # no_price = home team wins (poly_home)
+            # This ensures frontend can always trust: YES = away, NO = home
+            
+            # For Kalshi, normalize prices based on which team YES refers to
+            if kalshi_yes_team == poly_away:
+                # Kalshi YES = away team - use as-is
+                kalshi_normalized_yes = km["yes_price"]  # Away team price
+                kalshi_normalized_no = km["no_price"]    # Home team price
+            else:
+                # Kalshi YES = home team - swap prices
+                kalshi_normalized_yes = km["no_price"]   # Away team price
+                kalshi_normalized_no = km["yes_price"]   # Home team price
+            
             matches.append({
                 "normalized_name": pm["normalized_name"],
                 "game_date": pm["game_date"],
@@ -1075,16 +1075,16 @@ async def get_all_sports_markets():
                 "polymarket": {
                     "id": pm["id"],
                     "name": pm["name"],  # Original market name
-                    "yes_price": aligned_poly_price,  # Price for market_team to win
-                    "no_price": aligned_poly_no_price,
+                    "yes_price": poly_away_price,  # ALWAYS away team wins
+                    "no_price": poly_home_price,   # ALWAYS home team wins
                     "slug": poly_slug,
                     "url": poly_url,
                 },
                 "kalshi": {
                     "id": km["id"],
                     "name": km["name"],  # Original market name
-                    "yes_price": aligned_kalshi_price,  # Price for market_team to win
-                    "no_price": aligned_kalshi_no_price,
+                    "yes_price": kalshi_normalized_yes,  # ALWAYS away team wins
+                    "no_price": kalshi_normalized_no,    # ALWAYS home team wins
                     "url": kalshi_url,
                 },
                 "price_diff_yes": price_diff,  # True arbitrage difference
