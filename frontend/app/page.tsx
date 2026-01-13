@@ -725,6 +725,177 @@ function PriceCard({
   )
 }
 
+interface UnifiedMarket {
+  key: string
+  normalizedName: string
+  sport: string | null
+  gameDate: string | null
+  polymarket: MarketItem | null
+  kalshi: MarketItem | null
+}
+
+function UnifiedMarketsTable({
+  polyMarkets,
+  kalshiMarkets,
+  sportColors
+}: {
+  polyMarkets: MarketItem[]
+  kalshiMarkets: MarketItem[]
+  sportColors: Record<string, string>
+}) {
+  // Create a unified list by matching markets on normalized name
+  const unifiedMarkets: UnifiedMarket[] = []
+  const usedKalshiIds = new Set<string>()
+
+  // First, add all Polymarket markets and try to find matching Kalshi markets
+  for (const poly of polyMarkets) {
+    const normalizedName = poly.normalized_name || poly.name
+    const polyKey = `${normalizedName}-${poly.game_date || ''}-${poly.sport || ''}`
+    
+    // Find matching Kalshi market by normalized name and date
+    const matchingKalshi = kalshiMarkets.find(k => {
+      const kNormalized = k.normalized_name || k.name
+      const kKey = `${kNormalized}-${k.game_date || ''}-${k.sport || ''}`
+      return kKey === polyKey && !usedKalshiIds.has(k.id)
+    })
+
+    if (matchingKalshi) {
+      usedKalshiIds.add(matchingKalshi.id)
+    }
+
+    unifiedMarkets.push({
+      key: polyKey,
+      normalizedName,
+      sport: poly.sport || null,
+      gameDate: poly.game_date || null,
+      polymarket: poly,
+      kalshi: matchingKalshi || null
+    })
+  }
+
+  // Add remaining Kalshi markets that weren't matched
+  for (const kalshi of kalshiMarkets) {
+    if (!usedKalshiIds.has(kalshi.id)) {
+      const normalizedName = kalshi.normalized_name || kalshi.name
+      unifiedMarkets.push({
+        key: `kalshi-${kalshi.id}`,
+        normalizedName,
+        sport: kalshi.sport || null,
+        gameDate: kalshi.game_date || null,
+        polymarket: null,
+        kalshi: kalshi
+      })
+    }
+  }
+
+  // Sort by sport, then by date, then by name
+  unifiedMarkets.sort((a, b) => {
+    if (a.sport !== b.sport) return (a.sport || '').localeCompare(b.sport || '')
+    if (a.gameDate !== b.gameDate) return (a.gameDate || '').localeCompare(b.gameDate || '')
+    return a.normalizedName.localeCompare(b.normalizedName)
+  })
+
+  const matchedCount = unifiedMarkets.filter(m => m.polymarket && m.kalshi).length
+
+  return (
+    <div className="card-glass rounded-xl overflow-hidden">
+      <div className="p-4 border-b border-white/10 bg-gradient-to-r from-electric-cyan/5 to-electric-purple/5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <span className="text-sm text-white/90 font-medium">All Markets</span>
+            <span className="text-xs text-white/50">
+              {unifiedMarkets.length} total • {matchedCount} matched on both platforms
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="badge-polymarket px-2 py-0.5 rounded text-xs">Polymarket</span>
+            <span className="badge-kalshi px-2 py-0.5 rounded text-xs">Kalshi</span>
+          </div>
+        </div>
+      </div>
+      <div className="max-h-[600px] overflow-y-auto">
+        {unifiedMarkets.length === 0 ? (
+          <div className="p-8 text-center text-white/40">
+            No markets found
+          </div>
+        ) : (
+          <table className="w-full">
+            <thead className="sticky top-0 bg-midnight-800 z-10">
+              <tr className="text-xs text-white/50 uppercase">
+                <th className="text-left p-3 w-12">Sport</th>
+                <th className="text-left p-3">Event</th>
+                <th className="text-center p-3 w-24">Date</th>
+                <th className="text-center p-3 w-32 border-l border-white/10">
+                  <span className="text-electric-cyan">Polymarket</span>
+                </th>
+                <th className="text-center p-3 w-32 border-l border-white/10">
+                  <span className="text-electric-purple">Kalshi</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/5">
+              {unifiedMarkets.map((market, i) => (
+                <tr key={market.key + i} className="hover:bg-white/5 transition">
+                  <td className="p-3">
+                    {market.sport && (
+                      <span className={clsx(
+                        "px-2 py-0.5 rounded text-[10px] font-medium uppercase border",
+                        sportColors[market.sport] || "bg-white/10 text-white/60 border-white/20"
+                      )}>
+                        {market.sport}
+                      </span>
+                    )}
+                  </td>
+                  <td className="p-3">
+                    <div className="text-sm text-white/90 font-medium">
+                      {market.normalizedName}
+                    </div>
+                  </td>
+                  <td className="p-3 text-center">
+                    <span className="text-xs text-white/50 font-mono">
+                      {market.gameDate || '—'}
+                    </span>
+                  </td>
+                  <td className="p-3 border-l border-white/10">
+                    {market.polymarket ? (
+                      <div className="flex justify-center gap-3">
+                        <span className="font-mono text-profit text-sm">
+                          {(market.polymarket.yes_price * 100).toFixed(0)}¢
+                        </span>
+                        <span className="text-white/30">/</span>
+                        <span className="font-mono text-loss text-sm">
+                          {(market.polymarket.no_price * 100).toFixed(0)}¢
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="text-white/20 text-center block">—</span>
+                    )}
+                  </td>
+                  <td className="p-3 border-l border-white/10">
+                    {market.kalshi ? (
+                      <div className="flex justify-center gap-3">
+                        <span className="font-mono text-profit text-sm">
+                          {(market.kalshi.yes_price * 100).toFixed(0)}¢
+                        </span>
+                        <span className="text-white/30">/</span>
+                        <span className="font-mono text-loss text-sm">
+                          {(market.kalshi.no_price * 100).toFixed(0)}¢
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="text-white/20 text-center block">—</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function AllMarketsTab({ 
   data, 
   loading, 
@@ -1006,111 +1177,13 @@ function AllMarketsTab({
         </div>
       )}
 
-      {/* Two-column market table (for single_game and futures) */}
+      {/* Unified market table (for single_game and futures) */}
       {marketType !== 'matches' && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Polymarket Column */}
-          <div className="card-glass rounded-xl overflow-hidden">
-            <div className="p-4 border-b border-white/10 bg-electric-cyan/5">
-              <div className="flex items-center gap-2">
-                <span className="badge-polymarket px-2 py-0.5 rounded text-xs font-medium">Polymarket</span>
-                <span className="text-sm text-white/60">{filteredPoly.length} markets</span>
-              </div>
-            </div>
-            <div className="max-h-[600px] overflow-y-auto">
-              {filteredPoly.length === 0 ? (
-                <div className="p-8 text-center text-white/40">
-                  No {marketType === 'single_game' ? 'single game' : 'futures'} markets found
-                </div>
-              ) : (
-                <table className="w-full">
-                  <thead className="sticky top-0 bg-midnight-800">
-                    <tr className="text-xs text-white/50 uppercase">
-                      <th className="text-left p-3">Market</th>
-                      <th className="text-right p-3 w-20">Yes</th>
-                      <th className="text-right p-3 w-20">No</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/5">
-                    {filteredPoly.map((market, i) => (
-                      <tr key={market.id || i} className="hover:bg-white/5 transition">
-                        <td className="p-3">
-                          <div className="text-sm text-white/90 font-medium">
-                            {getDisplayName(market)}
-                          </div>
-                          <div className="text-xs text-white/40 mt-0.5">
-                            {getMarketMeta(market) || market.slug || market.id}
-                          </div>
-                        </td>
-                        <td className="p-3 text-right">
-                          <span className="font-mono text-profit font-medium">
-                            {(market.yes_price * 100).toFixed(0)}¢
-                          </span>
-                        </td>
-                        <td className="p-3 text-right">
-                          <span className="font-mono text-loss font-medium">
-                            {(market.no_price * 100).toFixed(0)}¢
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-          </div>
-
-          {/* Kalshi Column */}
-          <div className="card-glass rounded-xl overflow-hidden">
-            <div className="p-4 border-b border-white/10 bg-electric-purple/5">
-              <div className="flex items-center gap-2">
-                <span className="badge-kalshi px-2 py-0.5 rounded text-xs font-medium">Kalshi</span>
-                <span className="text-sm text-white/60">{filteredKalshi.length} markets</span>
-              </div>
-            </div>
-            <div className="max-h-[600px] overflow-y-auto">
-              {filteredKalshi.length === 0 ? (
-                <div className="p-8 text-center text-white/40">
-                  No {marketType === 'single_game' ? 'single game' : 'futures'} markets found
-                </div>
-              ) : (
-                <table className="w-full">
-                  <thead className="sticky top-0 bg-midnight-800">
-                    <tr className="text-xs text-white/50 uppercase">
-                      <th className="text-left p-3">Market</th>
-                      <th className="text-right p-3 w-20">Yes</th>
-                      <th className="text-right p-3 w-20">No</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/5">
-                    {filteredKalshi.map((market, i) => (
-                      <tr key={market.id || i} className="hover:bg-white/5 transition">
-                        <td className="p-3">
-                          <div className="text-sm text-white/90 font-medium">
-                            {getDisplayName(market)}
-                          </div>
-                          <div className="text-xs text-white/40 mt-0.5">
-                            {getMarketMeta(market) || market.series || market.id}
-                          </div>
-                        </td>
-                        <td className="p-3 text-right">
-                          <span className="font-mono text-profit font-medium">
-                            {(market.yes_price * 100).toFixed(0)}¢
-                          </span>
-                        </td>
-                        <td className="p-3 text-right">
-                          <span className="font-mono text-loss font-medium">
-                            {(market.no_price * 100).toFixed(0)}¢
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-          </div>
-        </div>
+        <UnifiedMarketsTable 
+          polyMarkets={filteredPoly} 
+          kalshiMarkets={filteredKalshi}
+          sportColors={sportColors}
+        />
       )}
 
       {/* Last updated */}
