@@ -834,45 +834,43 @@ async def get_all_sports_markets():
         # Detect market type
         market_type = matcher.detect_market_type(question, "", slug)
         
-        # CRITICAL: Match Polymarket outcomes to teams by name, not index!
+        # CRITICAL: Match Polymarket outcomes to teams using explicit team name maps
         # outcomes = ["Knicks", "Kings"], outcome_prices = [0.79, 0.23]
-        # We need to find which outcome corresponds to away_team vs home_team
+        # Use normalizer.normalize_team() to convert outcome names to canonical form
         outcomes = m.get("outcomes", [])
         outcome_prices = m.get("outcome_prices", [])
         
-        # Default to raw yes/no prices (index-based)
+        # Default to raw yes/no prices (index-based fallback)
         away_team_price = m.get("yes_price", 0)
         home_team_price = m.get("no_price", 0)
         
-        # Try to match outcome names to team names
+        # Use explicit team name lookup to match outcomes to teams
         if outcomes and outcome_prices and away_team and home_team and len(outcomes) >= 2 and len(outcome_prices) >= 2:
-            away_lower = away_team.lower()
-            home_lower = home_team.lower()
-            
-            # Find which outcome index matches which team
-            away_idx = None
-            home_idx = None
-            
+            # Build a map: canonical_team_name -> price
+            outcome_to_price = {}
             for idx, outcome in enumerate(outcomes):
-                outcome_lower = outcome.lower() if outcome else ""
-                # Check if outcome contains team name or vice versa
-                # e.g., "Knicks" matches "New York Knicks", "knicks" matches "Knicks"
-                if any(word in outcome_lower for word in away_lower.split()) or \
-                   any(word in away_lower for word in outcome_lower.split() if len(word) > 2):
-                    away_idx = idx
-                elif any(word in outcome_lower for word in home_lower.split()) or \
-                     any(word in home_lower for word in outcome_lower.split() if len(word) > 2):
-                    home_idx = idx
+                if idx < len(outcome_prices) and outcome:
+                    # Use the normalizer to convert "Knicks" -> "New York Knicks"
+                    canonical = normalizer.normalize_team(outcome, sport)
+                    if canonical:
+                        outcome_to_price[canonical] = outcome_prices[idx]
+                        # Also store lowercase for backup matching
+                        outcome_to_price[canonical.lower()] = outcome_prices[idx]
             
-            # If we found matches, use the correct prices
-            if away_idx is not None and away_idx < len(outcome_prices):
-                away_team_price = outcome_prices[away_idx]
-            if home_idx is not None and home_idx < len(outcome_prices):
-                home_team_price = outcome_prices[home_idx]
+            # Look up prices for away and home teams
+            if away_team in outcome_to_price:
+                away_team_price = outcome_to_price[away_team]
+            elif away_team.lower() in outcome_to_price:
+                away_team_price = outcome_to_price[away_team.lower()]
+                
+            if home_team in outcome_to_price:
+                home_team_price = outcome_to_price[home_team]
+            elif home_team.lower() in outcome_to_price:
+                home_team_price = outcome_to_price[home_team.lower()]
             
-            # Log for debugging
             logger.debug(f"Polymarket {slug}: outcomes={outcomes}, prices={outcome_prices}")
-            logger.debug(f"  away={away_team}(idx={away_idx}, price={away_team_price}), home={home_team}(idx={home_idx}, price={home_team_price})")
+            logger.debug(f"  outcome_to_price={outcome_to_price}")
+            logger.debug(f"  away={away_team} -> {away_team_price}, home={home_team} -> {home_team_price}")
         
         poly_formatted.append({
             "id": m.get("id"),
